@@ -166,6 +166,7 @@ InputState Win32Window::inputState()
         mouseDeltaY,
         renderModeSelection,
         toggleFullscreen,
+        keyPressed(VK_F2),
     };
 }
 

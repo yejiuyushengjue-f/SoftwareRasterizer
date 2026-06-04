@@ -11,6 +11,7 @@ add_executable(CPURasterizer WIN32
     src/core/Application.cpp
     src/core/Camera.cpp
     src/core/Framebuffer.cpp
+    src/core/PerformanceHud.cpp
     src/platform/Win32Window.cpp
     src/renderer/ObjLoader.cpp
     src/renderer/Renderer.cpp

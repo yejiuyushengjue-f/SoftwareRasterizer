@@ -5,6 +5,7 @@
 #include "renderer/Vertex.h"
 
 #include <array>
+#include <cstdint>
 #include <vector>
 
 namespace sr {
@@ -51,16 +52,30 @@ struct ShadowMap {
     float sample(int x, int y) const;
 };
 
+struct RendererStats {
+    std::uint64_t drawCommands = 0;
+    std::uint64_t inputTriangles = 0;
+    std::uint64_t rasterizedTriangles = 0;
+    std::uint64_t shadowTriangles = 0;
+    std::uint64_t shadedPixels = 0;
+    std::uint64_t colorPixelsWritten = 0;
+    std::uint64_t shadowDepthWrites = 0;
+    double shadowPassMilliseconds = 0.0;
+    double mainPassMilliseconds = 0.0;
+};
+
 class Renderer {
 public:
     void render(const TestScene& scene, const Camera& camera, Framebuffer& framebuffer);
     void setRenderMode(RenderMode mode);
     RenderMode renderMode() const;
     const char* renderModeName() const;
+    const RendererStats& stats() const;
 
 private:
     ShadowMap shadowMap_;
     RenderMode renderMode_ = RenderMode::Final;
+    RendererStats stats_;
 
     void draw(
         const DrawCommand& command,

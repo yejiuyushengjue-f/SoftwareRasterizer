@@ -34,6 +34,19 @@
 - Shadow Mapping：在 CPU 侧生成主方向光深度图，支持 constant bias、slope-scale bias 和 3x3 加权 PCF 软阴影。
 - OBJ 模型加载：支持 Wavefront OBJ 的位置、UV、法线、负索引和多边形三角化。
 - Debug Views：通过数字键切换 Albedo、Normal、Depth、UV、Shadow Factor、Light、Light-space Depth 等调试视图。
+- 性能 HUD：在画面内显示 FPS、帧耗时、Shadow/Main Pass 耗时、三角形数量和像素统计，便于观察 CPU 渲染瓶颈。
+
+## 简历定位
+
+这个项目定位为图形学核心型本科项目：从零实现一个 C++20 CPU Rasterizer，用可运行程序和调试视图展示现代渲染管线的底层机制，而不是依赖现成图形 API 或大型引擎封装。
+
+可放入简历的核心表述：
+
+- 使用 C++20 与 Win32 API 实现纯 CPU 光栅化渲染器，覆盖帧缓冲、顶点变换、视锥裁剪、三角形光栅化和深度测试。
+- 实现透视校正插值、OBJ 模型加载、纹理采样、Normal Mapping、多光源 Blinn-Phong 着色和 CPU Shadow Mapping。
+- 设计 Albedo、Normal、Depth、UV、Shadow Factor、Light-space Depth 等 Debug Views，用中间结果验证渲染管线正确性。
+
+更完整的简历升级路线见 [docs/resume-roadmap.md](docs/resume-roadmap.md)。
 
 ## 核心技术实现
 
@@ -98,6 +111,12 @@ flowchart LR
 | Light | `7` | 使用白色表面展示纯光照响应 |
 | Light-space Depth | `8` | 展示像素投影到主方向光空间后的深度 |
 
+## 性能指标 HUD
+
+程序默认在左上角显示性能 HUD，可用 `F2` 开关。HUD 会展示 FPS、总帧耗时、Update / Render / Present 耗时、Shadow Pass / Main Pass 耗时、输入与光栅化三角形数量、着色像素、通过深度测试写入的像素，以及 Shadow Map 深度写入次数。
+
+耗时条形图以当前帧耗时或 Render 阶段耗时为参考，适合快速判断瓶颈来自主渲染、阴影生成、窗口提交还是场景更新。
+
 ## 我实现了什么
 
 这个项目重点体现：
@@ -135,6 +154,7 @@ OBJ 模型可以放在：
 | 方向键 | 旋转视角 |
 | 鼠标右键拖拽 | 旋转视角 |
 | `F11` / `Alt+Enter` | 切换全屏 |
+| `F2` | 显示 / 隐藏性能 HUD |
 | `1` 到 `8` | 切换 Render Mode / Debug View |
 
 ## 构建与运行
@@ -155,7 +175,7 @@ cmake --build build --config Debug
 ## 后续规划
 
 - 接入 ImGui 调试面板，支持实时调整渲染模式、光源参数、阴影 bias 与 PCF 设置。
-- 增加 FPS、帧耗时、三角形数量、Shadow Pass / Main Pass 耗时等性能统计，用于分析 CPU 渲染瓶颈。
+- 继续扩展性能统计与对比方式，用于分析 CPU 渲染瓶颈和验证后续优化效果。
 - 优化光栅化阶段性能，包括背面剔除、包围盒扫描、Shadow Map 分辨率控制和 PCF 采样开关。
 - 完善材质与色彩处理，加入 Gamma Correction、Tone Mapping，并尝试实现简化 PBR 材质模型。
 - 探索 Tile-based Rasterization 与多线程渲染，提高复杂模型和高分辨率场景下的渲染性能。

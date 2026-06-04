@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <limits>
 #include <stdexcept>
@@ -580,6 +581,11 @@ float lightSpaceDepth01(Vec3 worldPosition, const Mat4& lightViewProjection, con
     return projection.depth01;
 }
 
+double elapsedMilliseconds(std::chrono::steady_clock::time_point begin, std::chrono::steady_clock::time_point end)
+{
+    return std::chrono::duration<double, std::milli>(end - begin).count();
+}
+
 } // namespace
 
 ShadowMap::ShadowMap(int mapWidth, int mapHeight)
@@ -652,20 +658,32 @@ const char* Renderer::renderModeName() const
     }
 }
 
+const RendererStats& Renderer::stats() const
+{
+    return stats_;
+}
+
 void Renderer::render(const TestScene& scene, const Camera& camera, Framebuffer& framebuffer)
 {
+    stats_ = {};
     framebuffer.clear({ 18, 20, 28, 255 });
 
     const DirectionalLight light = sceneLight();
     const Mat4 lightViewProjection = sceneLightViewProjection(light);
+    const auto shadowBegin = std::chrono::steady_clock::now();
     renderShadowMap(scene, lightViewProjection, shadowMap_);
+    const auto shadowEnd = std::chrono::steady_clock::now();
+    stats_.shadowPassMilliseconds = elapsedMilliseconds(shadowBegin, shadowEnd);
 
+    const auto mainBegin = std::chrono::steady_clock::now();
     const Mat4 view = camera.viewMatrix();
     const ViewLightSet lights = sceneLightsInView(view);
     const Mat4 projection = camera.projectionMatrix(framebuffer.width(), framebuffer.height());
     for (const DrawCommand& command : scene.drawCommands()) {
         draw(command, view, projection, lightViewProjection, light, lights, shadowMap_, framebuffer);
     }
+    const auto mainEnd = std::chrono::steady_clock::now();
+    stats_.mainPassMilliseconds = elapsedMilliseconds(mainBegin, mainEnd);
 }
 
 void Renderer::draw(
@@ -682,6 +700,8 @@ void Renderer::draw(
         return;
     }
 
+    ++stats_.drawCommands;
+    stats_.inputTriangles += static_cast<std::uint64_t>(command.mesh.vertexCount / 3);
     for (int i = 0; i + 2 < command.mesh.vertexCount; i += 3) {
         drawTriangle(command, command.mesh.vertices + i, view, projection, lightViewProjection, light, lights, shadowMap, framebuffer);
     }
@@ -755,6 +775,7 @@ void Renderer::drawTriangle(
             continue;
         }
 
+        ++stats_.rasterizedTriangles;
         const int minX = std::max(0, static_cast<int>(std::floor(std::min({ p0.x, p1.x, p2.x }))));
         const int maxX = std::min(framebuffer.width() - 1, static_cast<int>(std::ceil(std::max({ p0.x, p1.x, p2.x }))));
         const int minY = std::max(0, static_cast<int>(std::floor(std::min({ p0.y, p1.y, p2.y }))));
@@ -840,6 +861,7 @@ void Renderer::drawTriangle(
                 }
 
                 Color color = albedo;
+                ++stats_.shadedPixels;
                 switch (mode) {
                 case RenderMode::Final:
                     color = applyLighting(surfaceColor, shadingNormal, viewPosition, lights, command.material, shadow);
@@ -867,7 +889,9 @@ void Renderer::drawTriangle(
                     break;
                 }
 
-                framebuffer.setPixelIfCloser(x, y, depth, color);
+                if (framebuffer.setPixelIfCloser(x, y, depth, color)) {
+                    ++stats_.colorPixelsWritten;
+                }
             }
         }
     }
@@ -924,6 +948,7 @@ void Renderer::drawShadowTriangle(const DrawCommand& command, const Vertex* vert
         return;
     }
 
+    ++stats_.shadowTriangles;
     const int minX = std::max(0, static_cast<int>(std::floor(std::min({ p0.x, p1.x, p2.x }))));
     const int maxX = std::min(shadowMap.width - 1, static_cast<int>(std::ceil(std::max({ p0.x, p1.x, p2.x }))));
     const int minY = std::max(0, static_cast<int>(std::floor(std::min({ p0.y, p1.y, p2.y }))));
@@ -941,7 +966,9 @@ void Renderer::drawShadowTriangle(const DrawCommand& command, const Vertex* vert
             }
 
             const float depth = screen[0].depth * w0 + screen[1].depth * w1 + screen[2].depth * w2;
-            shadowMap.setIfCloser(x, y, depth);
+            if (shadowMap.setIfCloser(x, y, depth)) {
+                ++stats_.shadowDepthWrites;
+            }
         }
     }
 }

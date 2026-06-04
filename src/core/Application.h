@@ -2,6 +2,7 @@
 
 #include "core/Camera.h"
 #include "core/Framebuffer.h"
+#include "core/PerformanceHud.h"
 #include "platform/Win32Window.h"
 #include "renderer/Renderer.h"
 #include "scenes/TestScene.h"
@@ -26,8 +27,10 @@ private:
     Camera camera_;
     Renderer renderer_;
     TestScene scene_;
+    PerformanceMonitor performanceMonitor_;
     std::chrono::steady_clock::time_point lastFrameTime_;
     RenderMode lastWindowTitleMode_ = RenderMode::Final;
+    bool performanceHudVisible_ = true;
 };
 
 } // namespace sr

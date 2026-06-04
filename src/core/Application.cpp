@@ -1,9 +1,19 @@
 #include "core/Application.h"
 
 #include <algorithm>
+#include <chrono>
 #include <string>
 
 namespace sr {
+
+namespace {
+
+double elapsedMilliseconds(std::chrono::steady_clock::time_point begin, std::chrono::steady_clock::time_point end)
+{
+    return std::chrono::duration<double, std::milli>(end - begin).count();
+}
+
+} // namespace
 
 Application::Application(void* nativeInstance, int showCommand)
     : framebuffer_(960, 540)
@@ -17,13 +27,45 @@ Application::Application(void* nativeInstance, int showCommand)
 int Application::run()
 {
     while (window_.processMessages()) {
-        const auto now = std::chrono::steady_clock::now();
-        const std::chrono::duration<float> elapsed = now - lastFrameTime_;
-        lastFrameTime_ = now;
+        const auto frameBegin = std::chrono::steady_clock::now();
+        const std::chrono::duration<float> elapsed = frameBegin - lastFrameTime_;
+        lastFrameTime_ = frameBegin;
 
         const float deltaSeconds = std::min(elapsed.count(), 0.1f);
+        const auto updateBegin = std::chrono::steady_clock::now();
         update(deltaSeconds);
+        const auto updateEnd = std::chrono::steady_clock::now();
+
+        const auto renderBegin = std::chrono::steady_clock::now();
         render();
+        const auto renderEnd = std::chrono::steady_clock::now();
+
+        double hudMilliseconds = 0.0;
+        if (performanceHudVisible_ && performanceMonitor_.hasStats()) {
+            const auto hudBegin = std::chrono::steady_clock::now();
+            drawPerformanceHud(framebuffer_, performanceMonitor_.displayStats());
+            const auto hudEnd = std::chrono::steady_clock::now();
+            hudMilliseconds = elapsedMilliseconds(hudBegin, hudEnd);
+        }
+
+        const auto presentBegin = std::chrono::steady_clock::now();
+        window_.present(framebuffer_);
+        const auto presentEnd = std::chrono::steady_clock::now();
+
+        const auto frameEnd = std::chrono::steady_clock::now();
+        const double frameMilliseconds = elapsedMilliseconds(frameBegin, frameEnd);
+        FrameStats stats;
+        stats.framesPerSecond = frameMilliseconds > 0.0 ? 1000.0 / frameMilliseconds : 0.0;
+        stats.frameMilliseconds = frameMilliseconds;
+        stats.updateMilliseconds = elapsedMilliseconds(updateBegin, updateEnd);
+        stats.renderMilliseconds = elapsedMilliseconds(renderBegin, renderEnd);
+        stats.hudMilliseconds = hudMilliseconds;
+        stats.presentMilliseconds = elapsedMilliseconds(presentBegin, presentEnd);
+        stats.framebufferWidth = framebuffer_.width();
+        stats.framebufferHeight = framebuffer_.height();
+        stats.renderModeName = renderer_.renderModeName();
+        stats.renderer = renderer_.stats();
+        performanceMonitor_.submit(stats);
     }
 
     return 0;
@@ -34,6 +76,9 @@ void Application::update(float deltaSeconds)
     const InputState input = window_.inputState();
     if (input.toggleFullscreen) {
         window_.toggleFullscreen();
+    }
+    if (input.togglePerformanceHud) {
+        performanceHudVisible_ = !performanceHudVisible_;
     }
     resizeFramebufferToWindow();
 
@@ -62,7 +107,6 @@ void Application::resizeFramebufferToWindow()
 void Application::render()
 {
     renderer_.render(scene_, camera_, framebuffer_);
-    window_.present(framebuffer_);
 }
 
 } // namespace sr
