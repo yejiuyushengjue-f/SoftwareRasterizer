@@ -1,59 +1,58 @@
 # CPU Rasterizer
 
-一个使用 C++20 从零实现的纯 CPU 软件光栅化渲染器。项目重点不是调用现成图形 API，而是完整拆解并实现现代渲染管线中的关键环节：窗口显示、帧缓冲、顶点变换、视锥裁剪、三角形光栅化、深度测试、透视校正插值、纹理采样、法线贴图、多光源着色与阴影映射。
+一个使用 C++20 与 Win32 API 从零实现的纯 CPU 软件光栅化渲染器。项目不依赖 Direct3D、OpenGL 或 Vulkan，而是在 CPU 侧完整复现现代渲染管线中的核心环节：帧缓冲、顶点变换、视锥裁剪、三角形光栅化、深度测试、透视校正插值、纹理采样、法线贴图、多光源着色与阴影映射。
+
+**项目价值摘要**
+
+- 从零实现 CPU Rasterizer，用可运行程序展示 GPU 渲染管线的底层机制，而不是调用现成图形 API。
+- 支持 OBJ 模型加载、JPEG/PNG 纹理、Normal Mapping、多光源 Blinn-Phong 着色和 CPU Shadow Mapping。
+- 提供 Albedo、Normal、Depth、UV、Shadow Factor、Light、Light-space Depth 等 Debug Views，用中间结果验证渲染正确性。
+- 内置性能 HUD，展示 FPS、帧耗时、Shadow/Main Pass 耗时、三角形数量和像素统计，便于观察 CPU 渲染瓶颈。
 
 ## 项目预览
 
 ### 最终渲染
 
-展示材质、纹理、多光源、模型加载与最终着色效果。
+最终画面展示 OBJ 模型加载、材质纹理、法线贴图、多光源光照、Blinn-Phong 高光、阴影映射与帧缓冲输出。
 
 ![最终渲染](docs/images/final.png)
 
-### 法线调试
+### 调试视图
 
-展示观察空间法线与 Normal Mapping 带来的像素级法线扰动。
+调试视图用于拆解渲染结果，分别验证纹理采样、法线方向、深度分布、UV 坐标、阴影因子、光照响应和光源空间深度。
 
-![法线调试](docs/images/normal.png)
+| Albedo | Normal |
+| --- | --- |
+| ![Albedo 调试视图](docs/images/albedo.png) | ![Normal 调试视图](docs/images/normal.png) |
+| Depth | UV |
+| ![Depth 调试视图](docs/images/depth.png) | ![UV 调试视图](docs/images/UV.png) |
+| Shadow Factor | Light |
+| ![Shadow Factor 调试视图](docs/images/shadow-factor.png) | ![Light 调试视图](docs/images/light.png) |
+| Light-space Depth |  |
+| ![Light-space Depth 调试视图](docs/images/debug-views.png) |  |
 
-### 调试视图合集
+### 性能 HUD
 
-展示 Albedo、Depth、UV、Light-space Depth 等渲染中间结果，便于定位纹理坐标、深度和光照空间问题。
+HUD 展示 FPS、Frame、Update、Render、Shadow/Main Pass、Present、输入与光栅化三角形数量、着色像素和 Shadow Map 写入次数，方便定位瓶颈来自主渲染、阴影生成还是窗口提交。
 
-![调试视图合集](docs/images/debug-views.png)
+![性能 HUD](docs/images/HUD.png)
 
 ## 项目亮点
 
-- 纯 CPU 渲染管线：从顶点处理到像素着色全部在 CPU 侧完成，不依赖 Direct3D/OpenGL/Vulkan。
-- Win32 窗口与帧缓冲：支持窗口尺寸变化、BGRA 像素缓冲显示、深度缓冲和全屏切换。
-- 完整三角形管线：包含齐次裁剪、背面剔除、屏幕空间包围盒、重心坐标光栅化和逐像素深度测试。
-- 透视校正插值：对 UV、法线、切线、世界坐标和观察空间坐标进行透视校正，保证纹理和光照结果稳定。
-- 材质与纹理系统：支持 ambient/diffuse/specular 参数、JPEG/PNG 纹理加载、缺失资源时自动生成棋盘格备用纹理。
-- Normal Mapping：根据 UV 自动生成切线空间，在像素阶段采样 normal map 并参与光照计算。
-- 多光源着色：实现环境光、方向光、点光源、Lambert 漫反射和 Blinn-Phong 高光。
-- Shadow Mapping：在 CPU 侧生成主方向光深度图，支持 constant bias、slope-scale bias 和 3x3 加权 PCF 软阴影。
-- OBJ 模型加载：支持 Wavefront OBJ 的位置、UV、法线、负索引和多边形三角化。
-- Debug Views：通过数字键切换 Albedo、Normal、Depth、UV、Shadow Factor、Light、Light-space Depth 等调试视图。
-- 性能 HUD：在画面内显示 FPS、帧耗时、Shadow/Main Pass 耗时、三角形数量和像素统计，便于观察 CPU 渲染瓶颈。
+- **纯 CPU 渲染管线**：顶点处理、视锥裁剪、三角形光栅化、深度测试和像素着色全部在 CPU 侧完成，不依赖图形 API。
+- **完整光栅化核心**：实现齐次裁剪、背面剔除、屏幕空间包围盒扫描、重心坐标插值和逐像素深度缓冲。
+- **透视正确的材质渲染**：基于 `1/w` 对 UV、法线、切线、世界坐标和观察空间坐标做透视校正，支持纹理采样与 Normal Mapping。
+- **光照与阴影**：实现环境光、方向光、点光源、Lambert 漫反射、Blinn-Phong 高光，以及带 bias 和 3x3 加权 PCF 的 CPU Shadow Mapping。
+- **资源与工程支持**：支持 Wavefront OBJ 的位置、UV、法线、负索引和多边形三角化，并通过 Windows Imaging Component 加载 JPEG/PNG 纹理。
+- **可验证与可观测**：通过多种 Debug Views 和性能 HUD 拆解中间结果，方便验证 UV、法线、深度、阴影和性能瓶颈。
 
-## 简历定位
+## 技术难点与解决
 
-这个项目定位为图形学核心型本科项目：从零实现一个 C++20 CPU Rasterizer，用可运行程序和调试视图展示现代渲染管线的底层机制，而不是依赖现成图形 API 或大型引擎封装。
-
-可放入简历的核心表述：
-
-- 使用 C++20 与 Win32 API 实现纯 CPU 光栅化渲染器，覆盖帧缓冲、顶点变换、视锥裁剪、三角形光栅化和深度测试。
-- 实现透视校正插值、OBJ 模型加载、纹理采样、Normal Mapping、多光源 Blinn-Phong 着色和 CPU Shadow Mapping。
-- 设计 Albedo、Normal、Depth、UV、Shadow Factor、Light-space Depth 等 Debug Views，用中间结果验证渲染管线正确性。
-
-更完整的简历升级路线见 [docs/resume-roadmap.md](docs/resume-roadmap.md)。
-
-## 核心技术实现
-
-- 顶点到屏幕空间转换：实现 Model/View/Projection 变换、齐次除法、视口映射和观察空间属性传递。
-- 视锥裁剪与三角形光栅化：在齐次裁剪空间裁剪三角形，再使用屏幕空间包围盒和重心坐标逐像素填充。
-- 透视校正与像素着色：基于 `1/w` 对 UV、法线、切线和坐标进行校正插值，并完成纹理、材质、法线贴图和多光源计算。
-- 阴影与调试视图：生成光源空间深度图，结合 bias 与 PCF 计算软阴影，并提供多种中间结果视图辅助验证。
+- **齐次裁剪与三角形光栅化**：在裁剪空间处理视锥边界，避免近裁剪面后的异常三角形，再通过屏幕空间包围盒与重心坐标逐像素填充。
+- **透视校正插值**：对 UV、法线、切线和空间坐标使用 `1/w` 校正，避免纹理和光照在透视投影下出现线性插值失真。
+- **切线空间与 Normal Mapping**：根据模型顶点和 UV 自动构建切线方向，在像素阶段采样 normal map，并将扰动后的法线带入光照计算。
+- **CPU Shadow Mapping**：从主方向光视角生成深度图，在主渲染阶段结合 constant bias、slope-scale bias 和 3x3 PCF 计算软阴影，降低阴影痤疮和硬边问题。
+- **调试与性能观测**：将最终画面拆成 Albedo、Normal、Depth、UV、Shadow Factor、Light 和 Light-space Depth 等中间视图，并用 HUD 统计各阶段耗时和像素写入规模。
 
 ## 技术栈
 
@@ -116,15 +115,6 @@ flowchart LR
 程序默认在左上角显示性能 HUD，可用 `F2` 开关。HUD 会展示 FPS、总帧耗时、Update / Render / Present 耗时、Shadow Pass / Main Pass 耗时、输入与光栅化三角形数量、着色像素、通过深度测试写入的像素，以及 Shadow Map 深度写入次数。
 
 耗时条形图以当前帧耗时或 Render 阶段耗时为参考，适合快速判断瓶颈来自主渲染、阴影生成、窗口提交还是场景更新。
-
-## 我实现了什么
-
-这个项目重点体现：
-
-- 该项目主要用于加深对 GPU 渲染管线底层机制的理解，包括顶点处理、裁剪、光栅化、插值、深度测试、像素着色和调试视图设计，为后续学习 OpenGL / DirectX / Vulkan 和游戏引擎渲染模块打基础。
-- 熟悉矩阵变换、裁剪空间、重心插值、深度缓冲、切线空间和光照模型。
-- 能处理实际工程中的资源加载、窗口交互、异常保护和调试视图设计。
-- 能将渲染效果拆解为可验证的中间视图，便于定位 UV、法线、深度和阴影问题。
 
 ## 场景与资源
 
