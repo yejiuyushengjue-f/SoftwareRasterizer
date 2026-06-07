@@ -73,6 +73,12 @@ public:
     const RendererStats& stats() const;
 
 private:
+    struct CommandMatrices {
+        Mat4 modelView;
+        Mat4 mvp;
+        Mat4 lightMvp;
+    };
+
     ShadowMap shadowMap_;
     RenderMode renderMode_ = RenderMode::Final;
     RendererStats stats_;
@@ -89,15 +95,17 @@ private:
     void drawTriangle(
         const DrawCommand& command,
         const Vertex* vertices,
-        const Mat4& view,
-        const Mat4& projection,
+        const CommandMatrices& matrices,
         const Mat4& lightViewProjection,
         const DirectionalLight& light,
         const ViewLightSet& lights,
         const ShadowMap& shadowMap,
         Framebuffer& framebuffer);
+    void renderDepthPrepass(const TestScene& scene, const Mat4& view, const Mat4& projection, const Mat4& lightViewProjection, Framebuffer& framebuffer);
+    void drawDepthPrepass(const DrawCommand& command, const CommandMatrices& matrices, Framebuffer& framebuffer);
+    void drawDepthTriangle(const Vertex* vertices, const CommandMatrices& matrices, Framebuffer& framebuffer);
     void renderShadowMap(const TestScene& scene, const Mat4& lightViewProjection, ShadowMap& shadowMap);
-    void drawShadowTriangle(const DrawCommand& command, const Vertex* vertices, const Mat4& lightViewProjection, ShadowMap& shadowMap);
+    void drawShadowTriangle(const Vertex* vertices, const Mat4& lightMvp, ShadowMap& shadowMap);
 };
 
 } // namespace sr

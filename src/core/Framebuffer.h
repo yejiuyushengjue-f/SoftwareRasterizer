@@ -20,6 +20,8 @@ public:
     void clear(Color color);
     void clearDepth(float depth);
     void setPixel(int x, int y, Color color);
+    bool depthTest(int x, int y, float depth, float tolerance = 0.0f) const;
+    bool setDepthIfCloser(int x, int y, float depth);
     bool setPixelIfCloser(int x, int y, float depth, Color color);
 
 private:

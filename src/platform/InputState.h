@@ -20,6 +20,7 @@ struct InputState {
     int renderModeSelection = 0;
     bool toggleFullscreen = false;
     bool togglePerformanceHud = false;
+    bool toggleModel = false;
 };
 
 } // namespace sr

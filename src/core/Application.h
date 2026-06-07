@@ -18,6 +18,7 @@ public:
     int run();
 
 private:
+    void updateWindowTitle();
     void resizeFramebufferToWindow();
     void update(float deltaSeconds);
     void render();
@@ -30,6 +31,7 @@ private:
     PerformanceMonitor performanceMonitor_;
     std::chrono::steady_clock::time_point lastFrameTime_;
     RenderMode lastWindowTitleMode_ = RenderMode::Final;
+    const char* lastWindowTitleModel_ = "";
     bool performanceHudVisible_ = true;
 };
 

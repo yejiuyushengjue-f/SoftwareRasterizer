@@ -20,7 +20,7 @@ Application::Application(void* nativeInstance, int showCommand)
     , window_(nativeInstance, showCommand, framebuffer_.width(), framebuffer_.height(), "CPU Rasterizer")
     , lastFrameTime_(std::chrono::steady_clock::now())
 {
-    window_.setTitle("CPU Rasterizer - Render Mode: Final");
+    updateWindowTitle();
     resizeFramebufferToWindow();
 }
 
@@ -80,19 +80,30 @@ void Application::update(float deltaSeconds)
     if (input.togglePerformanceHud) {
         performanceHudVisible_ = !performanceHudVisible_;
     }
+    if (input.toggleModel) {
+        scene_.toggleModel();
+    }
     resizeFramebufferToWindow();
 
     camera_.update(input, deltaSeconds);
     if (input.renderModeSelection > 0) {
         renderer_.setRenderMode(static_cast<RenderMode>(input.renderModeSelection - 1));
     }
-    if (renderer_.renderMode() != lastWindowTitleMode_) {
-        std::string title = "CPU Rasterizer - Render Mode: ";
-        title += renderer_.renderModeName();
-        window_.setTitle(title.c_str());
-        lastWindowTitleMode_ = renderer_.renderMode();
+    if (renderer_.renderMode() != lastWindowTitleMode_ || scene_.activeModelName() != lastWindowTitleModel_) {
+        updateWindowTitle();
     }
     scene_.update(deltaSeconds);
+}
+
+void Application::updateWindowTitle()
+{
+    std::string title = "CPU Rasterizer - Render Mode: ";
+    title += renderer_.renderModeName();
+    title += " - Model: ";
+    title += scene_.activeModelName();
+    window_.setTitle(title.c_str());
+    lastWindowTitleMode_ = renderer_.renderMode();
+    lastWindowTitleModel_ = scene_.activeModelName();
 }
 
 void Application::resizeFramebufferToWindow()

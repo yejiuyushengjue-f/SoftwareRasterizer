@@ -64,20 +64,19 @@ std::filesystem::path findFirstObjFile()
     return {};
 }
 
-std::vector<Vertex> loadObjOrSphere(bool& usingObjModel)
+std::vector<Vertex> loadObjModel(bool& objModelAvailable)
 {
     const std::filesystem::path objPath = findFirstObjFile();
     if (!objPath.empty()) {
         try {
-            usingObjModel = true;
+            objModelAvailable = true;
             return ObjLoader::load(objPath, { true, 0.95f, { 255, 255, 255, 255 } });
         } catch (const std::runtime_error&) {
-            usingObjModel = false;
         }
     }
 
-    usingObjModel = false;
-    return makeSphereMesh(0.72f, 24, 48);
+    objModelAvailable = false;
+    return {};
 }
 
 Vertex makeVertex(Vec3 position, Vec2 uv, Vec3 normal)
@@ -243,19 +242,48 @@ TestScene::TestScene()
     , modelMaterial_(makeMaterial(&modelTexture_, { 210, 214, 220, 255 }, { 245, 245, 248, 255 }, { 245, 245, 255, 255 }, 0.23f, 0.95f, 0.38f, 36.0f))
     , cubeMaterial_(makeMaterial(&cubeTexture_, { 170, 176, 184, 255 }, { 210, 220, 232, 255 }, { 235, 232, 220, 255 }, 0.20f, 0.9f, 0.42f, 42.0f, &normalTexture_, 0.28f))
     , groundMaterial_(makeMaterial(nullptr, { 205, 210, 205, 255 }, { 240, 244, 236, 255 }, { 70, 76, 84, 255 }, 0.34f, 0.96f, 0.02f, 10.0f))
-    , modelMesh_(loadObjOrSphere(usingObjModel_))
+    , sphereMesh_(makeSphereMesh(0.72f, 24, 48))
+    , objMesh_(loadObjModel(objModelAvailable_))
     , cubeMesh_(makeCubeMesh(1.35f))
     , groundMesh_(makeGroundMesh())
 {
-    commands_[0].mesh = Mesh { modelMesh_.data(), static_cast<int>(modelMesh_.size()) };
     commands_[0].material = modelMaterial_;
-    commands_[0].castsShadow = !usingObjModel_;
+    applyActiveModel();
     commands_[1].mesh = Mesh { cubeMesh_.data(), static_cast<int>(cubeMesh_.size()) };
     commands_[1].material = cubeMaterial_;
     commands_[1].castsShadow = true;
     commands_[2].mesh = Mesh { groundMesh_.data(), static_cast<int>(groundMesh_.size()) };
     commands_[2].material = groundMaterial_;
     commands_[2].castsShadow = false;
+}
+
+void TestScene::toggleModel()
+{
+    if (usingObjModel_) {
+        usingObjModel_ = false;
+    } else if (objModelAvailable_) {
+        usingObjModel_ = true;
+    }
+
+    applyActiveModel();
+}
+
+const char* TestScene::activeModelName() const
+{
+    return usingObjModel_ ? "Linnea" : "Sphere";
+}
+
+void TestScene::applyActiveModel()
+{
+    const std::vector<Vertex>& activeMesh = usingObjModel_ && objModelAvailable_ ? objMesh_ : sphereMesh_;
+    if (activeMesh.empty()) {
+        commands_[0].mesh = {};
+        commands_[0].castsShadow = false;
+        return;
+    }
+
+    commands_[0].mesh = Mesh { activeMesh.data(), static_cast<int>(activeMesh.size()) };
+    commands_[0].castsShadow = !usingObjModel_;
 }
 
 void TestScene::update(float deltaSeconds)

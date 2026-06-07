@@ -66,6 +66,30 @@ void Framebuffer::setPixel(int x, int y, Color color)
     pixels_[indexOf(x, y)] = color.toBGRA();
 }
 
+bool Framebuffer::depthTest(int x, int y, float depth, float tolerance) const
+{
+    if (x < 0 || y < 0 || x >= width_ || y >= height_ || !std::isfinite(depth)) {
+        return false;
+    }
+
+    return depth <= depth_[indexOf(x, y)] + tolerance;
+}
+
+bool Framebuffer::setDepthIfCloser(int x, int y, float depth)
+{
+    if (x < 0 || y < 0 || x >= width_ || y >= height_ || !std::isfinite(depth)) {
+        return false;
+    }
+
+    const std::size_t index = indexOf(x, y);
+    if (depth >= depth_[index]) {
+        return false;
+    }
+
+    depth_[index] = depth;
+    return true;
+}
+
 bool Framebuffer::setPixelIfCloser(int x, int y, float depth, Color color)
 {
     if (x < 0 || y < 0 || x >= width_ || y >= height_ || !std::isfinite(depth)) {
