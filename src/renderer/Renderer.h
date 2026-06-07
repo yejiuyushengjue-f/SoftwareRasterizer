@@ -5,7 +5,11 @@
 #include "renderer/Vertex.h"
 
 #include <array>
+#include <condition_variable>
 #include <cstdint>
+#include <functional>
+#include <mutex>
+#include <thread>
 #include <vector>
 
 namespace sr {
@@ -66,6 +70,13 @@ struct RendererStats {
 
 class Renderer {
 public:
+    Renderer() = default;
+    ~Renderer();
+    Renderer(const Renderer&) = delete;
+    Renderer& operator=(const Renderer&) = delete;
+    Renderer(Renderer&&) = delete;
+    Renderer& operator=(Renderer&&) = delete;
+
     void render(const TestScene& scene, const Camera& camera, Framebuffer& framebuffer);
     void setRenderMode(RenderMode mode);
     RenderMode renderMode() const;
@@ -82,28 +93,21 @@ private:
     ShadowMap shadowMap_;
     RenderMode renderMode_ = RenderMode::Final;
     RendererStats stats_;
+    std::vector<std::thread> workerThreads_;
+    std::mutex workerMutex_;
+    std::condition_variable workerCv_;
+    std::condition_variable mainCv_;
+    std::function<void(std::size_t, std::size_t)> tileTask_;
+    std::size_t activeWorkerCount_ = 0;
+    std::size_t completedWorkerCount_ = 0;
+    std::uint64_t workerGeneration_ = 0;
+    bool taskAvailable_ = false;
+    bool stopWorkers_ = false;
 
-    void draw(
-        const DrawCommand& command,
-        const Mat4& view,
-        const Mat4& projection,
-        const Mat4& lightViewProjection,
-        const DirectionalLight& light,
-        const ViewLightSet& lights,
-        const ShadowMap& shadowMap,
-        Framebuffer& framebuffer);
-    void drawTriangle(
-        const DrawCommand& command,
-        const Vertex* vertices,
-        const CommandMatrices& matrices,
-        const Mat4& lightViewProjection,
-        const DirectionalLight& light,
-        const ViewLightSet& lights,
-        const ShadowMap& shadowMap,
-        Framebuffer& framebuffer);
-    void renderDepthPrepass(const TestScene& scene, const Mat4& view, const Mat4& projection, const Mat4& lightViewProjection, Framebuffer& framebuffer);
-    void drawDepthPrepass(const DrawCommand& command, const CommandMatrices& matrices, Framebuffer& framebuffer);
-    void drawDepthTriangle(const Vertex* vertices, const CommandMatrices& matrices, Framebuffer& framebuffer);
+    void ensureWorkerThreads(std::size_t tileCount);
+    void runTileWorkers(std::size_t tileCount, std::function<void(std::size_t, std::size_t)> task);
+    void workerLoop(std::size_t workerIndex);
+
     void renderShadowMap(const TestScene& scene, const Mat4& lightViewProjection, ShadowMap& shadowMap);
     void drawShadowTriangle(const Vertex* vertices, const Mat4& lightMvp, ShadowMap& shadowMap);
 };

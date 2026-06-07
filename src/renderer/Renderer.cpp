@@ -665,22 +665,124 @@ const RendererStats& Renderer::stats() const
     return stats_;
 }
 
+Renderer::~Renderer()
+{
+    {
+        std::lock_guard<std::mutex> lock(workerMutex_);
+        stopWorkers_ = true;
+        ++workerGeneration_;
+    }
+    workerCv_.notify_all();
+    for (std::thread& worker : workerThreads_) {
+        if (worker.joinable()) {
+            worker.join();
+        }
+    }
+}
+
+void Renderer::ensureWorkerThreads(std::size_t tileCount)
+{
+    if (tileCount <= 1) {
+        return;
+    }
+
+    unsigned int hardware = std::thread::hardware_concurrency();
+    if (hardware == 0) {
+        hardware = 1;
+    }
+
+    const std::size_t targetWorkerCount = std::min<std::size_t>(tileCount, std::max<unsigned int>(1, hardware));
+    while (workerThreads_.size() < targetWorkerCount) {
+        const std::size_t workerIndex = workerThreads_.size();
+        workerThreads_.emplace_back([this, workerIndex] {
+            workerLoop(workerIndex);
+        });
+    }
+}
+
+void Renderer::runTileWorkers(std::size_t tileCount, std::function<void(std::size_t, std::size_t)> task)
+{
+    if (tileCount == 0) {
+        return;
+    }
+
+    ensureWorkerThreads(tileCount);
+    if (workerThreads_.empty()) {
+        task(0, 1);
+        return;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(workerMutex_);
+        tileTask_ = std::move(task);
+        activeWorkerCount_ = workerThreads_.size();
+        completedWorkerCount_ = 0;
+        taskAvailable_ = true;
+        ++workerGeneration_;
+    }
+
+    workerCv_.notify_all();
+
+    std::unique_lock<std::mutex> lock(workerMutex_);
+    mainCv_.wait(lock, [this] {
+        return completedWorkerCount_ >= activeWorkerCount_;
+    });
+    tileTask_ = {};
+    taskAvailable_ = false;
+}
+
+void Renderer::workerLoop(std::size_t workerIndex)
+{
+    std::uint64_t observedGeneration = 0;
+
+    for (;;) {
+        std::function<void(std::size_t, std::size_t)> task;
+        std::size_t activeWorkerCount = 0;
+        {
+            std::unique_lock<std::mutex> lock(workerMutex_);
+            workerCv_.wait(lock, [this, &observedGeneration] {
+                return stopWorkers_ || (taskAvailable_ && workerGeneration_ != observedGeneration);
+            });
+
+            if (stopWorkers_) {
+                return;
+            }
+
+            observedGeneration = workerGeneration_;
+            task = tileTask_;
+            activeWorkerCount = activeWorkerCount_;
+        }
+
+        if (task && workerIndex < activeWorkerCount) {
+            task(workerIndex, activeWorkerCount);
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(workerMutex_);
+            ++completedWorkerCount_;
+            if (completedWorkerCount_ >= activeWorkerCount_) {
+                mainCv_.notify_one();
+            }
+        }
+    }
+}
+
 void Renderer::render(const TestScene& scene, const Camera& camera, Framebuffer& framebuffer)
 {
     struct PreparedTriangle {
         const DrawCommand* command = nullptr;
         ScreenVertex vertices[3] = {};
         int minX = 0;
-        int maxX = 0;
+        int maxXExclusive = 0;
         int minY = 0;
-        int maxY = 0;
+        int maxYExclusive = 0;
     };
 
     struct ScreenTile {
         int minX = 0;
         int minY = 0;
-        int maxX = 0;
-        int maxY = 0;
+        int maxXExclusive = 0;
+        int maxYExclusive = 0;
     };
 
     struct ThreadRenderStats {
@@ -779,9 +881,9 @@ void Renderer::render(const TestScene& scene, const Camera& camera, Framebuffer&
                 prepared.vertices[1] = screen[1];
                 prepared.vertices[2] = screen[2];
                 prepared.minX = std::max(0, static_cast<int>(std::floor(std::min({ p0.x, p1.x, p2.x }))));
-                prepared.maxX = std::min(framebuffer.width() - 1, static_cast<int>(std::ceil(std::max({ p0.x, p1.x, p2.x }))));
+                prepared.maxXExclusive = std::min(framebuffer.width(), static_cast<int>(std::ceil(std::max({ p0.x, p1.x, p2.x }))) + 1);
                 prepared.minY = std::max(0, static_cast<int>(std::floor(std::min({ p0.y, p1.y, p2.y }))));
-                prepared.maxY = std::min(framebuffer.height() - 1, static_cast<int>(std::ceil(std::max({ p0.y, p1.y, p2.y }))));
+                prepared.maxYExclusive = std::min(framebuffer.height(), static_cast<int>(std::ceil(std::max({ p0.y, p1.y, p2.y }))) + 1);
                 preparedTriangles.push_back(prepared);
                 ++stats_.rasterizedTriangles;
             }
@@ -795,47 +897,23 @@ void Renderer::render(const TestScene& scene, const Camera& camera, Framebuffer&
             tiles.push_back({
                 x,
                 y,
-                std::min(framebuffer.width() - 1, x + tileSize - 1),
-                std::min(framebuffer.height() - 1, y + tileSize - 1),
+                std::min(framebuffer.width(), x + tileSize),
+                std::min(framebuffer.height(), y + tileSize),
             });
         }
     }
 
-    unsigned int hardware = std::thread::hardware_concurrency();
-    if (hardware == 0) {
-        hardware = 1;
-    }
-    const std::size_t workerCount = std::min<std::size_t>(tiles.size(), std::max<unsigned int>(1, hardware));
-
-    const auto runWorkers = [workerCount](auto&& worker) {
-        if (workerCount == 0) {
-            return;
-        }
-        if (workerCount == 1) {
-            worker(0);
-            return;
-        }
-
-        std::vector<std::thread> workers;
-        workers.reserve(workerCount);
-        for (std::size_t workerIndex = 0; workerIndex < workerCount; ++workerIndex) {
-            workers.emplace_back([&, workerIndex] {
-                worker(workerIndex);
-            });
-        }
-        for (std::thread& thread : workers) {
-            thread.join();
-        }
-    };
+    ensureWorkerThreads(tiles.size());
+    const std::size_t renderWorkerCount = tiles.empty() ? 0 : (workerThreads_.empty() ? 1 : workerThreads_.size());
 
     const auto rasterizeDepthTile = [&](std::size_t tileIndex) {
         const ScreenTile& tile = tiles[tileIndex];
         for (const PreparedTriangle& triangle : preparedTriangles) {
             const int minX = std::max(tile.minX, triangle.minX);
-            const int maxX = std::min(tile.maxX, triangle.maxX);
+            const int maxXExclusive = std::min(tile.maxXExclusive, triangle.maxXExclusive);
             const int minY = std::max(tile.minY, triangle.minY);
-            const int maxY = std::min(tile.maxY, triangle.maxY);
-            if (minX > maxX || minY > maxY) {
+            const int maxYExclusive = std::min(tile.maxYExclusive, triangle.maxYExclusive);
+            if (minX >= maxXExclusive || minY >= maxYExclusive) {
                 continue;
             }
 
@@ -845,8 +923,8 @@ void Renderer::render(const TestScene& scene, const Camera& camera, Framebuffer&
             const Vec2 p2 = screen[2].position;
             const float area = edge(p0, p1, p2);
 
-            for (int y = minY; y <= maxY; ++y) {
-                for (int x = minX; x <= maxX; ++x) {
+            for (int y = minY; y < maxYExclusive; ++y) {
+                for (int x = minX; x < maxXExclusive; ++x) {
                     const Vec2 sample { static_cast<float>(x) + 0.5f, static_cast<float>(y) + 0.5f };
                     const float w0 = edge(p1, p2, sample) / area;
                     const float w1 = edge(p2, p0, sample) / area;
@@ -862,8 +940,8 @@ void Renderer::render(const TestScene& scene, const Camera& camera, Framebuffer&
         }
     };
 
-    runWorkers([&](std::size_t workerIndex) {
-        for (std::size_t tileIndex = workerIndex; tileIndex < tiles.size(); tileIndex += workerCount) {
+    runTileWorkers(tiles.size(), [&](std::size_t workerIndex, std::size_t activeWorkerCount) {
+        for (std::size_t tileIndex = workerIndex; tileIndex < tiles.size(); tileIndex += activeWorkerCount) {
             rasterizeDepthTile(tileIndex);
         }
     });
@@ -875,16 +953,16 @@ void Renderer::render(const TestScene& scene, const Camera& camera, Framebuffer&
     const bool needsShadow = mode == RenderMode::Final || mode == RenderMode::Shadow || mode == RenderMode::Light;
     const bool needsLightSpaceDepth = mode == RenderMode::LightDepth;
     const bool needsLightSpacePosition = needsShadow || needsLightSpaceDepth;
-    std::vector<ThreadRenderStats> threadStats(workerCount);
+    std::vector<ThreadRenderStats> threadStats(renderWorkerCount);
 
     const auto rasterizeColorTile = [&](std::size_t tileIndex, ThreadRenderStats& localStats) {
         const ScreenTile& tile = tiles[tileIndex];
         for (const PreparedTriangle& triangle : preparedTriangles) {
             const int minX = std::max(tile.minX, triangle.minX);
-            const int maxX = std::min(tile.maxX, triangle.maxX);
+            const int maxXExclusive = std::min(tile.maxXExclusive, triangle.maxXExclusive);
             const int minY = std::max(tile.minY, triangle.minY);
-            const int maxY = std::min(tile.maxY, triangle.maxY);
-            if (minX > maxX || minY > maxY) {
+            const int maxYExclusive = std::min(tile.maxYExclusive, triangle.maxYExclusive);
+            if (minX >= maxXExclusive || minY >= maxYExclusive) {
                 continue;
             }
 
@@ -895,8 +973,8 @@ void Renderer::render(const TestScene& scene, const Camera& camera, Framebuffer&
             const Vec2 p2 = screen[2].position;
             const float area = edge(p0, p1, p2);
 
-            for (int y = minY; y <= maxY; ++y) {
-                for (int x = minX; x <= maxX; ++x) {
+            for (int y = minY; y < maxYExclusive; ++y) {
+                for (int x = minX; x < maxXExclusive; ++x) {
                     const Vec2 sample { static_cast<float>(x) + 0.5f, static_cast<float>(y) + 0.5f };
                     const float w0 = edge(p1, p2, sample) / area;
                     const float w1 = edge(p2, p0, sample) / area;
@@ -1013,9 +1091,9 @@ void Renderer::render(const TestScene& scene, const Camera& camera, Framebuffer&
         }
     };
 
-    runWorkers([&](std::size_t workerIndex) {
+    runTileWorkers(tiles.size(), [&](std::size_t workerIndex, std::size_t activeWorkerCount) {
         ThreadRenderStats& localStats = threadStats[workerIndex];
-        for (std::size_t tileIndex = workerIndex; tileIndex < tiles.size(); tileIndex += workerCount) {
+        for (std::size_t tileIndex = workerIndex; tileIndex < tiles.size(); tileIndex += activeWorkerCount) {
             rasterizeColorTile(tileIndex, localStats);
         }
     });
@@ -1026,304 +1104,6 @@ void Renderer::render(const TestScene& scene, const Camera& camera, Framebuffer&
     }
     const auto mainEnd = std::chrono::steady_clock::now();
     stats_.mainPassMilliseconds = elapsedMilliseconds(mainBegin, mainEnd);
-}
-
-void Renderer::draw(
-    const DrawCommand& command,
-    const Mat4& view,
-    const Mat4& projection,
-    const Mat4& lightViewProjection,
-    const DirectionalLight& light,
-    const ViewLightSet& lights,
-    const ShadowMap& shadowMap,
-    Framebuffer& framebuffer)
-{
-    if (!command.mesh.vertices || command.mesh.vertexCount < 3) {
-        return;
-    }
-
-    ++stats_.drawCommands;
-    stats_.inputTriangles += static_cast<std::uint64_t>(command.mesh.vertexCount / 3);
-    const Mat4 modelView = view * command.transform;
-    const CommandMatrices matrices {
-        modelView,
-        projection * modelView,
-        lightViewProjection * command.transform,
-    };
-    for (int i = 0; i + 2 < command.mesh.vertexCount; i += 3) {
-        drawTriangle(command, command.mesh.vertices + i, matrices, lightViewProjection, light, lights, shadowMap, framebuffer);
-    }
-}
-
-void Renderer::drawTriangle(
-    const DrawCommand& command,
-    const Vertex* vertices,
-    const CommandMatrices& matrices,
-    const Mat4& lightViewProjection,
-    const DirectionalLight& light,
-    const ViewLightSet& lights,
-    const ShadowMap& shadowMap,
-    Framebuffer& framebuffer)
-{
-    const RenderMode mode = renderMode_;
-    const bool needsSurfaceColor = mode == RenderMode::Final || mode == RenderMode::Albedo;
-    const bool needsNormal = mode == RenderMode::Final || mode == RenderMode::Normal || mode == RenderMode::Shadow || mode == RenderMode::Light;
-    const bool needsViewPosition = mode == RenderMode::Final || mode == RenderMode::Light;
-    const bool needsShadow = mode == RenderMode::Final || mode == RenderMode::Shadow || mode == RenderMode::Light;
-    const bool needsLightSpaceDepth = mode == RenderMode::LightDepth;
-    const bool needsLightSpacePosition = needsShadow || needsLightSpaceDepth;
-
-    ClipVertex clipTriangle[3] = {};
-
-    for (int i = 0; i < 3; ++i) {
-        const Vertex& vertex = vertices[i];
-        const Vec4 worldPosition = command.transform * Vec4 { vertex.position.x, vertex.position.y, vertex.position.z, 1.0f };
-        const Vec4 viewPosition = matrices.modelView * Vec4 { vertex.position.x, vertex.position.y, vertex.position.z, 1.0f };
-        const Vec4 clip = matrices.mvp * Vec4 { vertex.position.x, vertex.position.y, vertex.position.z, 1.0f };
-        const Vec3 normal = transformDirection(matrices.modelView, vertex.normal);
-        const Vec3 tangent = transformDirection(matrices.modelView, vertex.tangent);
-        if (!isFinite(worldPosition) || !isFinite(viewPosition) || !isFinite(clip) || !isFinite(normal) || !isFinite(tangent)) {
-            return;
-        }
-
-        clipTriangle[i] = {
-            clip,
-            { worldPosition.x, worldPosition.y, worldPosition.z },
-            { viewPosition.x, viewPosition.y, viewPosition.z },
-            vertex.uv,
-            normal,
-            tangent,
-            vertex.tangentSign,
-            vertex.color,
-        };
-    }
-
-    const ClipPolygon clippedPolygon = clipTriangleToFrustum(clipTriangle);
-    if (clippedPolygon.count < 3) {
-        return;
-    }
-
-    for (int i = 1; i + 1 < clippedPolygon.count; ++i) {
-        ScreenVertex screen[3] = {};
-        if (!toScreenVertex(clippedPolygon.vertices[0], framebuffer.width(), framebuffer.height(), screen[0])
-            || !toScreenVertex(clippedPolygon.vertices[static_cast<std::size_t>(i)], framebuffer.width(), framebuffer.height(), screen[1])
-            || !toScreenVertex(clippedPolygon.vertices[static_cast<std::size_t>(i + 1)], framebuffer.width(), framebuffer.height(), screen[2])) {
-            continue;
-        }
-
-        const Vec2 p0 = screen[0].position;
-        const Vec2 p1 = screen[1].position;
-        const Vec2 p2 = screen[2].position;
-        const float area = edge(p0, p1, p2);
-
-        if (area <= 0.000001f) {
-            continue;
-        }
-
-        ++stats_.rasterizedTriangles;
-        const int minX = std::max(0, static_cast<int>(std::floor(std::min({ p0.x, p1.x, p2.x }))));
-        const int maxX = std::min(framebuffer.width() - 1, static_cast<int>(std::ceil(std::max({ p0.x, p1.x, p2.x }))));
-        const int minY = std::max(0, static_cast<int>(std::floor(std::min({ p0.y, p1.y, p2.y }))));
-        const int maxY = std::min(framebuffer.height() - 1, static_cast<int>(std::ceil(std::max({ p0.y, p1.y, p2.y }))));
-
-        for (int y = minY; y <= maxY; ++y) {
-            for (int x = minX; x <= maxX; ++x) {
-                const Vec2 sample { static_cast<float>(x) + 0.5f, static_cast<float>(y) + 0.5f };
-                const float w0 = edge(p1, p2, sample) / area;
-                const float w1 = edge(p2, p0, sample) / area;
-                const float w2 = edge(p0, p1, sample) / area;
-
-                if (w0 < 0.0f || w1 < 0.0f || w2 < 0.0f) {
-                    continue;
-                }
-
-                const float depth = screen[0].depth * w0 + screen[1].depth * w1 + screen[2].depth * w2;
-                const float interpolatedInvW = screen[0].invW * w0 + screen[1].invW * w1 + screen[2].invW * w2;
-                if (!std::isfinite(depth) || !std::isfinite(interpolatedInvW) || interpolatedInvW <= 0.000001f) {
-                    continue;
-                }
-                if (!framebuffer.depthTest(x, y, depth, depthPrepassTolerance)) {
-                    continue;
-                }
-
-                const Vec2 uv {
-                    (screen[0].uvOverW.x * w0 + screen[1].uvOverW.x * w1 + screen[2].uvOverW.x * w2) / interpolatedInvW,
-                    (screen[0].uvOverW.y * w0 + screen[1].uvOverW.y * w1 + screen[2].uvOverW.y * w2) / interpolatedInvW,
-                };
-                Vec3 normal {};
-                Vec3 shadingNormal {};
-                if (needsNormal) {
-                    normal = {
-                        (screen[0].normalOverW.x * w0 + screen[1].normalOverW.x * w1 + screen[2].normalOverW.x * w2) / interpolatedInvW,
-                        (screen[0].normalOverW.y * w0 + screen[1].normalOverW.y * w1 + screen[2].normalOverW.y * w2) / interpolatedInvW,
-                        (screen[0].normalOverW.z * w0 + screen[1].normalOverW.z * w1 + screen[2].normalOverW.z * w2) / interpolatedInvW,
-                    };
-                    const Vec3 tangent = {
-                        (screen[0].tangentOverW.x * w0 + screen[1].tangentOverW.x * w1 + screen[2].tangentOverW.x * w2) / interpolatedInvW,
-                        (screen[0].tangentOverW.y * w0 + screen[1].tangentOverW.y * w1 + screen[2].tangentOverW.y * w2) / interpolatedInvW,
-                        (screen[0].tangentOverW.z * w0 + screen[1].tangentOverW.z * w1 + screen[2].tangentOverW.z * w2) / interpolatedInvW,
-                    };
-                    const float tangentSign = (screen[0].tangentSignOverW * w0 + screen[1].tangentSignOverW * w1 + screen[2].tangentSignOverW * w2) / interpolatedInvW;
-                    if (!isFinite(normal) || !isFinite(tangent) || !std::isfinite(tangentSign)) {
-                        continue;
-                    }
-                    shadingNormal = applyNormalMap(normal, tangent, tangentSign, uv, command.material);
-                }
-
-                Vec3 viewPosition {};
-                if (needsViewPosition) {
-                    viewPosition = {
-                        (screen[0].viewPositionOverW.x * w0 + screen[1].viewPositionOverW.x * w1 + screen[2].viewPositionOverW.x * w2) / interpolatedInvW,
-                        (screen[0].viewPositionOverW.y * w0 + screen[1].viewPositionOverW.y * w1 + screen[2].viewPositionOverW.y * w2) / interpolatedInvW,
-                        (screen[0].viewPositionOverW.z * w0 + screen[1].viewPositionOverW.z * w1 + screen[2].viewPositionOverW.z * w2) / interpolatedInvW,
-                    };
-                }
-
-                float shadow = 1.0f;
-                float lightDepth = -1.0f;
-                if (needsLightSpacePosition) {
-                    const Vec3 worldPosition = {
-                        (screen[0].worldPositionOverW.x * w0 + screen[1].worldPositionOverW.x * w1 + screen[2].worldPositionOverW.x * w2) / interpolatedInvW,
-                        (screen[0].worldPositionOverW.y * w0 + screen[1].worldPositionOverW.y * w1 + screen[2].worldPositionOverW.y * w2) / interpolatedInvW,
-                        (screen[0].worldPositionOverW.z * w0 + screen[1].worldPositionOverW.z * w1 + screen[2].worldPositionOverW.z * w2) / interpolatedInvW,
-                    };
-                    if (!isFinite(worldPosition)) {
-                        continue;
-                    }
-                    if (needsShadow) {
-                        shadow = shadowFactor(worldPosition, normal, light, lightViewProjection, shadowMap);
-                    }
-                    if (needsLightSpaceDepth) {
-                        lightDepth = lightSpaceDepth01(worldPosition, lightViewProjection, shadowMap);
-                    }
-                }
-
-                Color surfaceColor { 255, 255, 255, 255 };
-                Color albedo { 255, 255, 255, 255 };
-                if (needsSurfaceColor) {
-                    surfaceColor = mixColor(screen[0].color, screen[1].color, screen[2].color, w0, w1, w2);
-                    if (command.material.diffuseTexture) {
-                        surfaceColor = modulate(command.material.diffuseTexture->sample(uv), surfaceColor);
-                    }
-                    albedo = modulate(surfaceColor, command.material.diffuseColor);
-                }
-
-                Color color = albedo;
-                ++stats_.shadedPixels;
-                switch (mode) {
-                case RenderMode::Final:
-                    color = applyLighting(surfaceColor, shadingNormal, viewPosition, lights, command.material, shadow);
-                    break;
-                case RenderMode::Albedo:
-                    color = albedo;
-                    break;
-                case RenderMode::Normal:
-                    color = normalToColor(shadingNormal);
-                    break;
-                case RenderMode::Depth:
-                    color = grayscale(depth * 0.5f + 0.5f);
-                    break;
-                case RenderMode::UV:
-                    color = uvToColor(uv);
-                    break;
-                case RenderMode::Shadow:
-                    color = grayscale(shadow);
-                    break;
-                case RenderMode::Light:
-                    color = applyLighting({ 255, 255, 255, 255 }, shadingNormal, viewPosition, lights, command.material, shadow);
-                    break;
-                case RenderMode::LightDepth:
-                    color = lightDepth >= 0.0f ? grayscale(lightDepth) : Color { 64, 0, 96, 255 };
-                    break;
-                }
-
-                framebuffer.setPixel(x, y, color);
-                ++stats_.colorPixelsWritten;
-            }
-        }
-    }
-}
-
-void Renderer::renderDepthPrepass(const TestScene& scene, const Mat4& view, const Mat4& projection, const Mat4& lightViewProjection, Framebuffer& framebuffer)
-{
-    for (const DrawCommand& command : scene.drawCommands()) {
-        if (!command.mesh.vertices || command.mesh.vertexCount < 3) {
-            continue;
-        }
-
-        const Mat4 modelView = view * command.transform;
-        const CommandMatrices matrices {
-            modelView,
-            projection * modelView,
-            lightViewProjection * command.transform,
-        };
-        drawDepthPrepass(command, matrices, framebuffer);
-    }
-}
-
-void Renderer::drawDepthPrepass(const DrawCommand& command, const CommandMatrices& matrices, Framebuffer& framebuffer)
-{
-    for (int i = 0; i + 2 < command.mesh.vertexCount; i += 3) {
-        drawDepthTriangle(command.mesh.vertices + i, matrices, framebuffer);
-    }
-}
-
-void Renderer::drawDepthTriangle(const Vertex* vertices, const CommandMatrices& matrices, Framebuffer& framebuffer)
-{
-    ClipVertex clipTriangle[3] = {};
-
-    for (int i = 0; i < 3; ++i) {
-        const Vertex& vertex = vertices[i];
-        const Vec4 clip = matrices.mvp * Vec4 { vertex.position.x, vertex.position.y, vertex.position.z, 1.0f };
-        if (!isFinite(clip)) {
-            return;
-        }
-
-        clipTriangle[i].clip = clip;
-    }
-
-    const ClipPolygon clippedPolygon = clipTriangleToFrustum(clipTriangle);
-    if (clippedPolygon.count < 3) {
-        return;
-    }
-
-    for (int i = 1; i + 1 < clippedPolygon.count; ++i) {
-        ScreenVertex screen[3] = {};
-        if (!toScreenVertex(clippedPolygon.vertices[0], framebuffer.width(), framebuffer.height(), screen[0])
-            || !toScreenVertex(clippedPolygon.vertices[static_cast<std::size_t>(i)], framebuffer.width(), framebuffer.height(), screen[1])
-            || !toScreenVertex(clippedPolygon.vertices[static_cast<std::size_t>(i + 1)], framebuffer.width(), framebuffer.height(), screen[2])) {
-            continue;
-        }
-
-        const Vec2 p0 = screen[0].position;
-        const Vec2 p1 = screen[1].position;
-        const Vec2 p2 = screen[2].position;
-        const float area = edge(p0, p1, p2);
-        if (area <= 0.000001f) {
-            continue;
-        }
-
-        const int minX = std::max(0, static_cast<int>(std::floor(std::min({ p0.x, p1.x, p2.x }))));
-        const int maxX = std::min(framebuffer.width() - 1, static_cast<int>(std::ceil(std::max({ p0.x, p1.x, p2.x }))));
-        const int minY = std::max(0, static_cast<int>(std::floor(std::min({ p0.y, p1.y, p2.y }))));
-        const int maxY = std::min(framebuffer.height() - 1, static_cast<int>(std::ceil(std::max({ p0.y, p1.y, p2.y }))));
-
-        for (int y = minY; y <= maxY; ++y) {
-            for (int x = minX; x <= maxX; ++x) {
-                const Vec2 sample { static_cast<float>(x) + 0.5f, static_cast<float>(y) + 0.5f };
-                const float w0 = edge(p1, p2, sample) / area;
-                const float w1 = edge(p2, p0, sample) / area;
-                const float w2 = edge(p0, p1, sample) / area;
-
-                if (w0 < 0.0f || w1 < 0.0f || w2 < 0.0f) {
-                    continue;
-                }
-
-                const float depth = screen[0].depth * w0 + screen[1].depth * w1 + screen[2].depth * w2;
-                framebuffer.setDepthIfCloser(x, y, depth);
-            }
-        }
-    }
 }
 
 void Renderer::renderShadowMap(const TestScene& scene, const Mat4& lightViewProjection, ShadowMap& shadowMap)
