@@ -18,6 +18,21 @@ struct ObjIndex {
     int normal = -1;
 };
 
+std::string location(const std::filesystem::path& path, int lineNumber)
+{
+    std::ostringstream message;
+    message << path.string();
+    if (lineNumber >= 0) {
+        message << ":" << lineNumber;
+    }
+    return message.str();
+}
+
+[[noreturn]] void throwObjError(const std::filesystem::path& path, int lineNumber, const std::string& reason)
+{
+    throw std::runtime_error(location(path, lineNumber) + ": " + reason);
+}
+
 int resolveIndex(int index, int count)
 {
     if (index > 0) {
@@ -29,7 +44,34 @@ int resolveIndex(int index, int count)
     return -1;
 }
 
-ObjIndex parseFaceToken(const std::string& token, int positionCount, int uvCount, int normalCount)
+int parseIndexPart(
+    const std::string& part,
+    int count,
+    const std::filesystem::path& path,
+    int lineNumber,
+    const std::string& token)
+{
+    try {
+        std::size_t parsedLength = 0;
+        const int rawIndex = std::stoi(part, &parsedLength);
+        if (parsedLength != part.size()) {
+            throwObjError(path, lineNumber, "Invalid OBJ face token '" + token + "'.");
+        }
+        return resolveIndex(rawIndex, count);
+    } catch (const std::invalid_argument&) {
+        throwObjError(path, lineNumber, "Invalid OBJ face token '" + token + "'.");
+    } catch (const std::out_of_range&) {
+        throwObjError(path, lineNumber, "OBJ face token index is out of range in '" + token + "'.");
+    }
+}
+
+ObjIndex parseFaceToken(
+    const std::string& token,
+    int positionCount,
+    int uvCount,
+    int normalCount,
+    const std::filesystem::path& path,
+    int lineNumber)
 {
     ObjIndex result;
     std::string parts[3];
@@ -39,21 +81,22 @@ ObjIndex parseFaceToken(const std::string& token, int positionCount, int uvCount
         if (ch == '/') {
             ++partIndex;
             if (partIndex >= 3) {
-                break;
+                throwObjError(path, lineNumber, "Invalid OBJ face token '" + token + "'.");
             }
         } else {
             parts[partIndex].push_back(ch);
         }
     }
 
-    if (!parts[0].empty()) {
-        result.position = resolveIndex(std::stoi(parts[0]), positionCount);
+    if (parts[0].empty()) {
+        throwObjError(path, lineNumber, "OBJ face token '" + token + "' is missing a position index.");
     }
+    result.position = parseIndexPart(parts[0], positionCount, path, lineNumber, token);
     if (!parts[1].empty()) {
-        result.uv = resolveIndex(std::stoi(parts[1]), uvCount);
+        result.uv = parseIndexPart(parts[1], uvCount, path, lineNumber, token);
     }
     if (!parts[2].empty()) {
-        result.normal = resolveIndex(std::stoi(parts[2]), normalCount);
+        result.normal = parseIndexPart(parts[2], normalCount, path, lineNumber, token);
     }
 
     return result;
@@ -64,6 +107,25 @@ bool validIndex(int index, int count)
     return index >= 0 && index < count;
 }
 
+void validateFaceIndex(
+    ObjIndex index,
+    const std::vector<Vec3>& positions,
+    const std::vector<Vec2>& uvs,
+    const std::vector<Vec3>& normals,
+    const std::filesystem::path& path,
+    int lineNumber)
+{
+    if (!validIndex(index.position, static_cast<int>(positions.size()))) {
+        throwObjError(path, lineNumber, "OBJ face references an invalid position index.");
+    }
+    if (index.uv != -1 && !validIndex(index.uv, static_cast<int>(uvs.size()))) {
+        throwObjError(path, lineNumber, "OBJ face references an invalid texture coordinate index.");
+    }
+    if (index.normal != -1 && !validIndex(index.normal, static_cast<int>(normals.size()))) {
+        throwObjError(path, lineNumber, "OBJ face references an invalid normal index.");
+    }
+}
+
 Vertex buildVertex(
     ObjIndex index,
     const std::vector<Vec3>& positions,
@@ -72,10 +134,6 @@ Vertex buildVertex(
     Vec3 fallbackNormal,
     Color color)
 {
-    if (!validIndex(index.position, static_cast<int>(positions.size()))) {
-        throw std::runtime_error("OBJ face references an invalid position index.");
-    }
-
     const Vec3 position = positions[static_cast<std::size_t>(index.position)];
     const Vec2 uv = validIndex(index.uv, static_cast<int>(uvs.size()))
         ? uvs[static_cast<std::size_t>(index.uv)]
@@ -136,7 +194,7 @@ std::vector<Vertex> ObjLoader::load(const std::filesystem::path& path, ObjLoadOp
 {
     std::ifstream file(path);
     if (!file) {
-        throw std::runtime_error("Failed to open OBJ file.");
+        throwObjError(path, -1, "Failed to open OBJ file.");
     }
 
     std::vector<Vec3> positions;
@@ -145,7 +203,9 @@ std::vector<Vertex> ObjLoader::load(const std::filesystem::path& path, ObjLoadOp
     std::vector<Vertex> vertices;
 
     std::string line;
+    int lineNumber = 0;
     while (std::getline(file, line)) {
+        ++lineNumber;
         if (line.empty() || line[0] == '#') {
             continue;
         }
@@ -170,20 +230,27 @@ std::vector<Vertex> ObjLoader::load(const std::filesystem::path& path, ObjLoadOp
             std::vector<ObjIndex> face;
             std::string token;
             while (stream >> token) {
-                face.push_back(parseFaceToken(token, static_cast<int>(positions.size()), static_cast<int>(uvs.size()), static_cast<int>(normals.size())));
+                face.push_back(parseFaceToken(
+                    token,
+                    static_cast<int>(positions.size()),
+                    static_cast<int>(uvs.size()),
+                    static_cast<int>(normals.size()),
+                    path,
+                    lineNumber));
             }
 
+            if (face.empty()) {
+                throwObjError(path, lineNumber, "OBJ face is empty.");
+            }
             if (face.size() < 3) {
-                continue;
+                throwObjError(path, lineNumber, "OBJ face must contain at least three vertices.");
             }
 
             for (std::size_t i = 1; i + 1 < face.size(); ++i) {
                 const ObjIndex triangle[3] = { face[0], face[i], face[i + 1] };
-                if (!validIndex(triangle[0].position, static_cast<int>(positions.size()))
-                    || !validIndex(triangle[1].position, static_cast<int>(positions.size()))
-                    || !validIndex(triangle[2].position, static_cast<int>(positions.size()))) {
-                    continue;
-                }
+                validateFaceIndex(triangle[0], positions, uvs, normals, path, lineNumber);
+                validateFaceIndex(triangle[1], positions, uvs, normals, path, lineNumber);
+                validateFaceIndex(triangle[2], positions, uvs, normals, path, lineNumber);
 
                 const Vec3 p0 = positions[static_cast<std::size_t>(triangle[0].position)];
                 const Vec3 p1 = positions[static_cast<std::size_t>(triangle[1].position)];
@@ -198,7 +265,7 @@ std::vector<Vertex> ObjLoader::load(const std::filesystem::path& path, ObjLoadOp
     }
 
     if (vertices.empty()) {
-        throw std::runtime_error("OBJ file did not contain renderable triangles.");
+        throwObjError(path, lineNumber, "OBJ file did not contain renderable triangles.");
     }
 
     if (options.normalizeToUnit) {
