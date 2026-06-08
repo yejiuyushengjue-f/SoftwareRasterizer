@@ -2,6 +2,7 @@
 
 #include "core/Camera.h"
 #include "core/Framebuffer.h"
+#include "renderer/RenderSceneView.h"
 #include "renderer/Vertex.h"
 
 #include <array>
@@ -14,8 +15,6 @@
 
 namespace sr {
 
-class TestScene;
-
 enum class RenderMode {
     Final = 0,
     Albedo,
@@ -25,19 +24,6 @@ enum class RenderMode {
     Shadow,
     Light,
     LightDepth,
-};
-
-struct DirectionalLight {
-    Vec3 direction;
-    Color color;
-    float intensity = 1.0f;
-};
-
-struct PointLight {
-    Vec3 position;
-    Color color;
-    float intensity = 1.0f;
-    float range = 1.0f;
 };
 
 struct ViewLightSet {
@@ -77,7 +63,7 @@ public:
     Renderer(Renderer&&) = delete;
     Renderer& operator=(Renderer&&) = delete;
 
-    void render(const TestScene& scene, const Camera& camera, Framebuffer& framebuffer);
+    void render(const RenderSceneView& scene, const Camera& camera, Framebuffer& framebuffer);
     void setRenderMode(RenderMode mode);
     RenderMode renderMode() const;
     const char* renderModeName() const;
@@ -108,7 +94,7 @@ private:
     void runTileWorkers(std::size_t tileCount, std::function<void(std::size_t, std::size_t)> task);
     void workerLoop(std::size_t workerIndex);
 
-    void renderShadowMap(const TestScene& scene, const Mat4& lightViewProjection, ShadowMap& shadowMap);
+    void renderShadowMap(const RenderSceneView& scene, const Mat4& lightViewProjection, ShadowMap& shadowMap);
     void drawShadowTriangle(const Vertex* vertices, const Mat4& lightMvp, ShadowMap& shadowMap);
 };
 

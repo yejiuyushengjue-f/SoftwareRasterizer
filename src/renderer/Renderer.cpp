@@ -1,6 +1,9 @@
 #include "renderer/Renderer.h"
 
-#include "scenes/TestScene.h"
+#include "renderer/RasterHelpers.h"
+#include "renderer/RenderContext.h"
+#include "renderer/RenderPasses.h"
+#include "renderer/ShadingHelpers.h"
 #include "renderer/Texture.h"
 
 #include <algorithm>
@@ -14,19 +17,6 @@
 namespace sr {
 
 namespace {
-
-struct ScreenVertex {
-    Vec2 position;
-    float depth = 0.0f;
-    float invW = 1.0f;
-    Vec3 worldPositionOverW;
-    Vec3 viewPositionOverW;
-    Vec2 uvOverW;
-    Vec3 normalOverW;
-    Vec3 tangentOverW;
-    float tangentSignOverW = 1.0f;
-    Color color;
-};
 
 struct ClipVertex {
     Vec4 clip;
@@ -54,14 +44,6 @@ struct ShadowProjection {
     float depth = 0.0f;
     float depth01 = 0.0f;
 };
-
-constexpr float shadowConstantBias = 0.0025f;
-constexpr float shadowSlopeScaleBias = 0.014f;
-constexpr float shadowMinimumBias = 0.0035f;
-constexpr float shadowMaximumBias = 0.035f;
-constexpr int shadowPcfRadius = 1;
-constexpr float shadowMinimumVisibility = 0.35f;
-constexpr float depthPrepassTolerance = 0.000001f;
 
 bool isFinite(Vec2 value)
 {
@@ -448,47 +430,38 @@ Vec3 transformPoint(const Mat4& matrix, Vec3 point)
     return { transformed.x, transformed.y, transformed.z };
 }
 
-DirectionalLight sceneLight()
+ViewLightSet sceneLightsInView(const RenderSettings& lighting, const Mat4& view)
 {
-    return {
-        normalize({ -0.45f, 0.65f, 1.0f }),
-        { 255, 244, 224, 255 },
-        0.8f,
-    };
-}
-
-ViewLightSet sceneLightsInView(const Mat4& view)
-{
-    const DirectionalLight primary = sceneLight();
-
     return {
         {
-            DirectionalLight { transformDirection(view, primary.direction), primary.color, primary.intensity },
-            DirectionalLight { transformDirection(view, normalize({ 0.75f, 0.35f, 0.25f })), { 135, 178, 255, 255 }, 0.28f },
-            DirectionalLight { transformDirection(view, normalize({ -0.2f, 0.85f, -0.45f })), { 255, 145, 112, 255 }, 0.18f },
+            DirectionalLight { transformDirection(view, lighting.directionalLights[0].direction), lighting.directionalLights[0].color, lighting.directionalLights[0].intensity },
+            DirectionalLight { transformDirection(view, lighting.directionalLights[1].direction), lighting.directionalLights[1].color, lighting.directionalLights[1].intensity },
+            DirectionalLight { transformDirection(view, lighting.directionalLights[2].direction), lighting.directionalLights[2].color, lighting.directionalLights[2].intensity },
         },
         {
             PointLight {
-                transformPoint(view, { -1.35f, 0.85f, -1.7f }),
-                { 255, 205, 150, 255 },
-                0.75f,
-                3.0f,
+                transformPoint(view, lighting.pointLights[0].position),
+                lighting.pointLights[0].color,
+                lighting.pointLights[0].intensity,
+                lighting.pointLights[0].range,
             },
             PointLight {
-                transformPoint(view, { 1.45f, -0.35f, -2.25f }),
-                { 120, 210, 255, 255 },
-                0.55f,
-                2.4f,
+                transformPoint(view, lighting.pointLights[1].position),
+                lighting.pointLights[1].color,
+                lighting.pointLights[1].intensity,
+                lighting.pointLights[1].range,
             },
         },
     };
 }
 
-Mat4 sceneLightViewProjection(const DirectionalLight& light)
+Mat4 sceneLightViewProjection(const RenderSettings& lighting)
 {
-    const Vec3 lightPosition = light.direction * 6.5f;
-    const Mat4 lightView = Mat4::lookAt(lightPosition, { 0.0f, 0.0f, -3.0f }, { 0.0f, 1.0f, 0.0f });
-    const Mat4 lightProjection = Mat4::orthographic(-4.0f, 4.0f, -4.0f, 4.0f, 0.1f, 12.0f);
+    const DirectionalLight& light = lighting.directionalLights[0];
+    const Vec3 lightPosition = light.direction * lighting.shadowLightDistance;
+    const Mat4 lightView = Mat4::lookAt(lightPosition, lighting.shadowTarget, { 0.0f, 1.0f, 0.0f });
+    const float extent = lighting.shadowOrthoExtent;
+    const Mat4 lightProjection = Mat4::orthographic(-extent, extent, -extent, extent, lighting.shadowNearPlane, lighting.shadowFarPlane);
     return lightProjection * lightView;
 }
 
@@ -525,25 +498,25 @@ bool projectToShadowMap(Vec3 worldPosition, const Mat4& lightViewProjection, con
     return true;
 }
 
-float shadowBias(Vec3 normal, Vec3 lightDirection)
+float shadowBias(Vec3 normal, Vec3 lightDirection, const RenderSettings& settings)
 {
     const float normalDotLight = std::max(0.0f, dot(normalize(normal), normalize(lightDirection)));
-    const float slopeBias = shadowSlopeScaleBias * (1.0f - normalDotLight);
-    return std::clamp(shadowConstantBias + slopeBias, shadowMinimumBias, shadowMaximumBias);
+    const float slopeBias = settings.shadowSlopeScaleBias * (1.0f - normalDotLight);
+    return std::clamp(settings.shadowConstantBias + slopeBias, settings.shadowMinimumBias, settings.shadowMaximumBias);
 }
 
-float pcfShadowFactor(const ShadowProjection& projection, float bias, const ShadowMap& shadowMap)
+float pcfShadowFactor(const ShadowProjection& projection, float bias, const ShadowMap& shadowMap, const RenderSettings& settings)
 {
     const int centerX = static_cast<int>(std::round(projection.texelPosition.x));
     const int centerY = static_cast<int>(std::round(projection.texelPosition.y));
     float weightedVisibility = 0.0f;
     float totalWeight = 0.0f;
 
-    for (int offsetY = -shadowPcfRadius; offsetY <= shadowPcfRadius; ++offsetY) {
-        for (int offsetX = -shadowPcfRadius; offsetX <= shadowPcfRadius; ++offsetX) {
+    for (int offsetY = -settings.shadowPcfRadius; offsetY <= settings.shadowPcfRadius; ++offsetY) {
+        for (int offsetX = -settings.shadowPcfRadius; offsetX <= settings.shadowPcfRadius; ++offsetX) {
             const int absOffsetX = offsetX < 0 ? -offsetX : offsetX;
             const int absOffsetY = offsetY < 0 ? -offsetY : offsetY;
-            const float weight = static_cast<float>((shadowPcfRadius + 1 - absOffsetX) * (shadowPcfRadius + 1 - absOffsetY));
+            const float weight = static_cast<float>((settings.shadowPcfRadius + 1 - absOffsetX) * (settings.shadowPcfRadius + 1 - absOffsetY));
             const float closestDepth = shadowMap.sample(centerX + offsetX, centerY + offsetY);
             const float lit = (!std::isfinite(closestDepth) || projection.depth <= closestDepth + bias) ? 1.0f : 0.0f;
             weightedVisibility += lit * weight;
@@ -556,10 +529,10 @@ float pcfShadowFactor(const ShadowProjection& projection, float bias, const Shad
     }
 
     const float visibility = weightedVisibility / totalWeight;
-    return shadowMinimumVisibility + (1.0f - shadowMinimumVisibility) * visibility;
+    return settings.shadowMinimumVisibility + (1.0f - settings.shadowMinimumVisibility) * visibility;
 }
 
-float shadowFactor(Vec3 worldPosition, Vec3 normal, const DirectionalLight& light, const Mat4& lightViewProjection, const ShadowMap& shadowMap)
+float shadowFactor(Vec3 worldPosition, Vec3 normal, const DirectionalLight& light, const Mat4& lightViewProjection, const ShadowMap& shadowMap, const RenderSettings& settings)
 {
     if (!isFinite(normal)) {
         return 1.0f;
@@ -570,7 +543,7 @@ float shadowFactor(Vec3 worldPosition, Vec3 normal, const DirectionalLight& ligh
         return 1.0f;
     }
 
-    return pcfShadowFactor(projection, shadowBias(normal, light.direction), shadowMap);
+    return pcfShadowFactor(projection, shadowBias(normal, light.direction, settings), shadowMap, settings);
 }
 
 float lightSpaceDepth01(Vec3 worldPosition, const Mat4& lightViewProjection, const ShadowMap& shadowMap)
@@ -767,46 +740,53 @@ void Renderer::workerLoop(std::size_t workerIndex)
     }
 }
 
-void Renderer::render(const TestScene& scene, const Camera& camera, Framebuffer& framebuffer)
+void Renderer::render(const RenderSceneView& scene, const Camera& camera, Framebuffer& framebuffer)
 {
-    struct PreparedTriangle {
-        const DrawCommand* command = nullptr;
-        ScreenVertex vertices[3] = {};
-        int minX = 0;
-        int maxXExclusive = 0;
-        int minY = 0;
-        int maxYExclusive = 0;
-    };
-
-    struct ScreenTile {
-        int minX = 0;
-        int minY = 0;
-        int maxXExclusive = 0;
-        int maxYExclusive = 0;
-    };
-
     struct ThreadRenderStats {
         std::uint64_t shadedPixels = 0;
         std::uint64_t colorPixelsWritten = 0;
     };
 
     stats_ = {};
-    framebuffer.clear({ 18, 20, 28, 255 });
+    framebuffer.clear(scene.settings.clearColor);
 
-    const DirectionalLight light = sceneLight();
-    const Mat4 lightViewProjection = sceneLightViewProjection(light);
-    const auto shadowBegin = std::chrono::steady_clock::now();
-    renderShadowMap(scene, lightViewProjection, shadowMap_);
-    const auto shadowEnd = std::chrono::steady_clock::now();
-    stats_.shadowPassMilliseconds = elapsedMilliseconds(shadowBegin, shadowEnd);
+    RenderContext context {
+        framebuffer,
+        camera,
+        scene,
+        renderMode_,
+        stats_,
+        shadowMap_,
+    };
+
+    ShadowPass shadowPass;
+    PrepareGeometryPass prepareGeometryPass;
+    DepthPrepass depthPrepass;
+    ColorPass colorPass;
+
+    context.primaryLight = &scene.settings.directionalLights[0];
+    context.lightViewProjection = sceneLightViewProjection(scene.settings);
+    context.shadowPass = [this](RenderContext& passContext) {
+        const auto shadowBegin = std::chrono::steady_clock::now();
+        renderShadowMap(passContext.scene, passContext.lightViewProjection, passContext.shadowMap);
+        const auto shadowEnd = std::chrono::steady_clock::now();
+        passContext.stats.shadowPassMilliseconds = elapsedMilliseconds(shadowBegin, shadowEnd);
+    };
+    shadowPass.execute(context);
 
     const auto mainBegin = std::chrono::steady_clock::now();
-    const Mat4 view = camera.viewMatrix();
-    const ViewLightSet lights = sceneLightsInView(view);
-    const Mat4 projection = camera.projectionMatrix(framebuffer.width(), framebuffer.height());
+    const DirectionalLight& light = *context.primaryLight;
+    const Mat4& lightViewProjection = context.lightViewProjection;
+    context.view = camera.viewMatrix();
+    const ViewLightSet lights = sceneLightsInView(scene.settings, context.view);
+    context.lights = &lights;
+    context.projection = camera.projectionMatrix(framebuffer.width(), framebuffer.height());
 
-    std::vector<PreparedTriangle> preparedTriangles;
-    for (const DrawCommand& command : scene.drawCommands()) {
+    context.prepareGeometryPass = [&](RenderContext& passContext) {
+    std::vector<PreparedTriangle>& preparedTriangles = passContext.preparedTriangles;
+    const Mat4& view = passContext.view;
+    const Mat4& projection = passContext.projection;
+    for (const DrawCommand& command : scene.drawCommands) {
         if (!command.mesh.vertices || command.mesh.vertexCount < 3) {
             continue;
         }
@@ -889,9 +869,11 @@ void Renderer::render(const TestScene& scene, const Camera& camera, Framebuffer&
             }
         }
     }
+    };
+    prepareGeometryPass.execute(context);
 
-    constexpr int tileSize = 32;
-    std::vector<ScreenTile> tiles;
+    const int tileSize = std::max(1, scene.settings.tileSize);
+    std::vector<ScreenTile>& tiles = context.tiles;
     for (int y = 0; y < framebuffer.height(); y += tileSize) {
         for (int x = 0; x < framebuffer.width(); x += tileSize) {
             tiles.push_back({
@@ -904,8 +886,11 @@ void Renderer::render(const TestScene& scene, const Camera& camera, Framebuffer&
     }
 
     ensureWorkerThreads(tiles.size());
-    const std::size_t renderWorkerCount = tiles.empty() ? 0 : (workerThreads_.empty() ? 1 : workerThreads_.size());
+    context.renderWorkerCount = tiles.empty() ? 0 : (workerThreads_.empty() ? 1 : workerThreads_.size());
 
+    context.depthPrepass = [&](RenderContext& passContext) {
+    const std::vector<PreparedTriangle>& preparedTriangles = passContext.preparedTriangles;
+    const std::vector<ScreenTile>& tiles = passContext.tiles;
     const auto rasterizeDepthTile = [&](std::size_t tileIndex) {
         const ScreenTile& tile = tiles[tileIndex];
         for (const PreparedTriangle& triangle : preparedTriangles) {
@@ -945,6 +930,8 @@ void Renderer::render(const TestScene& scene, const Camera& camera, Framebuffer&
             rasterizeDepthTile(tileIndex);
         }
     });
+    };
+    depthPrepass.execute(context);
 
     const RenderMode mode = renderMode_;
     const bool needsSurfaceColor = mode == RenderMode::Final || mode == RenderMode::Albedo;
@@ -953,8 +940,11 @@ void Renderer::render(const TestScene& scene, const Camera& camera, Framebuffer&
     const bool needsShadow = mode == RenderMode::Final || mode == RenderMode::Shadow || mode == RenderMode::Light;
     const bool needsLightSpaceDepth = mode == RenderMode::LightDepth;
     const bool needsLightSpacePosition = needsShadow || needsLightSpaceDepth;
-    std::vector<ThreadRenderStats> threadStats(renderWorkerCount);
+    std::vector<ThreadRenderStats> threadStats(context.renderWorkerCount);
 
+    context.colorPass = [&](RenderContext& passContext) {
+    const std::vector<PreparedTriangle>& preparedTriangles = passContext.preparedTriangles;
+    const std::vector<ScreenTile>& tiles = passContext.tiles;
     const auto rasterizeColorTile = [&](std::size_t tileIndex, ThreadRenderStats& localStats) {
         const ScreenTile& tile = tiles[tileIndex];
         for (const PreparedTriangle& triangle : preparedTriangles) {
@@ -988,7 +978,7 @@ void Renderer::render(const TestScene& scene, const Camera& camera, Framebuffer&
                     if (!std::isfinite(depth) || !std::isfinite(interpolatedInvW) || interpolatedInvW <= 0.000001f) {
                         continue;
                     }
-                    if (!framebuffer.depthTest(x, y, depth, depthPrepassTolerance)) {
+                    if (!framebuffer.depthTest(x, y, depth, scene.settings.depthPrepassTolerance)) {
                         continue;
                     }
 
@@ -1038,7 +1028,7 @@ void Renderer::render(const TestScene& scene, const Camera& camera, Framebuffer&
                             continue;
                         }
                         if (needsShadow) {
-                            shadow = shadowFactor(worldPosition, normal, light, lightViewProjection, shadowMap_);
+                            shadow = shadowFactor(worldPosition, normal, light, lightViewProjection, shadowMap_, scene.settings);
                         }
                         if (needsLightSpaceDepth) {
                             lightDepth = lightSpaceDepth01(worldPosition, lightViewProjection, shadowMap_);
@@ -1065,22 +1055,22 @@ void Renderer::render(const TestScene& scene, const Camera& camera, Framebuffer&
                         color = albedo;
                         break;
                     case RenderMode::Normal:
-                        color = normalToColor(shadingNormal);
+                        color = ::sr::normalToColor(shadingNormal);
                         break;
                     case RenderMode::Depth:
-                        color = grayscale(depth * 0.5f + 0.5f);
+                        color = ::sr::grayscale(depth * 0.5f + 0.5f);
                         break;
                     case RenderMode::UV:
-                        color = uvToColor(uv);
+                        color = ::sr::uvToColor(uv);
                         break;
                     case RenderMode::Shadow:
-                        color = grayscale(shadow);
+                        color = ::sr::grayscale(shadow);
                         break;
                     case RenderMode::Light:
                         color = applyLighting({ 255, 255, 255, 255 }, shadingNormal, viewPosition, lights, command.material, shadow);
                         break;
                     case RenderMode::LightDepth:
-                        color = lightDepth >= 0.0f ? grayscale(lightDepth) : Color { 64, 0, 96, 255 };
+                        color = lightDepth >= 0.0f ? ::sr::grayscale(lightDepth) : Color { 64, 0, 96, 255 };
                         break;
                     }
 
@@ -1097,6 +1087,8 @@ void Renderer::render(const TestScene& scene, const Camera& camera, Framebuffer&
             rasterizeColorTile(tileIndex, localStats);
         }
     });
+    };
+    colorPass.execute(context);
 
     for (const ThreadRenderStats& localStats : threadStats) {
         stats_.shadedPixels += localStats.shadedPixels;
@@ -1106,10 +1098,10 @@ void Renderer::render(const TestScene& scene, const Camera& camera, Framebuffer&
     stats_.mainPassMilliseconds = elapsedMilliseconds(mainBegin, mainEnd);
 }
 
-void Renderer::renderShadowMap(const TestScene& scene, const Mat4& lightViewProjection, ShadowMap& shadowMap)
+void Renderer::renderShadowMap(const RenderSceneView& scene, const Mat4& lightViewProjection, ShadowMap& shadowMap)
 {
     shadowMap.clear();
-    for (const DrawCommand& command : scene.drawCommands()) {
+    for (const DrawCommand& command : scene.drawCommands) {
         if (!command.castsShadow || !command.mesh.vertices || command.mesh.vertexCount < 3) {
             continue;
         }
