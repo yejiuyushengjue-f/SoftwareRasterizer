@@ -117,7 +117,7 @@ void Application::resizeFramebufferToWindow()
 
 void Application::render()
 {
-    renderer_.render(scene_, camera_, framebuffer_);
+    renderer_.render(scene_.renderView(), camera_, framebuffer_);
 }
 
 } // namespace sr

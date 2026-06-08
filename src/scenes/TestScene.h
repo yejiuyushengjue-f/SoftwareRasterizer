@@ -1,6 +1,8 @@
 #pragma once
 
-#include "renderer/Material.h"
+#include "scenes/LoadDiagnostics.h"
+#include "scenes/ScenePreset.h"
+#include "renderer/RenderSceneView.h"
 #include "renderer/Texture.h"
 #include "renderer/Vertex.h"
 
@@ -17,11 +19,15 @@ public:
     void toggleModel();
     void update(float deltaSeconds);
     std::span<const DrawCommand> drawCommands() const { return commands_; }
+    RenderSceneView renderView() const;
     const char* activeModelName() const;
+    const LoadDiagnostics& loadDiagnostics() const { return diagnostics_; }
 
 private:
     void applyActiveModel();
 
+    ScenePreset preset_;
+    LoadDiagnostics diagnostics_;
     float rotation_ = 0.0f;
     bool usingObjModel_ = false;
     bool objModelAvailable_ = false;
