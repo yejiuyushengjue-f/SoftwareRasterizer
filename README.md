@@ -127,8 +127,13 @@ cmake --build build --config Debug
 |-- docs/
 |   `-- images/             # README 截图
 |-- res/
-|   |-- Model/              # OBJ 模型资源
-|   `-- Texture/            # 默认纹理及额外贴图资源
+|   |-- Model/
+|   |   `-- Linnea.obj      # 默认示例 OBJ 模型
+|   `-- Texture/
+|       |-- Frosted Metal Texture.jpeg                  # 金属材质默认贴图
+|       |-- Cobblestone_pavement_texture.jpeg          # 地面漫反射贴图
+|       |-- Cobblestone_pavement_normal_texture.png    # 地面法线贴图
+|       `-- Brushed metal texture.jpeg                 # 额外金属纹理资源
 |-- src/
 |   |-- main.cpp            # Windows 入口
 |   |-- core/               # Application、Camera、Framebuffer、Performance HUD
@@ -138,7 +143,11 @@ cmake --build build --config Debug
 |   `-- scenes/             # 资源定位、场景预设、网格生成和 draw command 组织
 `-- tests/
     |-- TestMain.cpp        # 测试入口
-    `-- *Tests.cpp          # AssetLocator、MeshFactory、ObjLoader、Renderer、TestScene 测试
+    |-- AssetLocatorTests.cpp
+    |-- MeshFactoryTests.cpp
+    |-- ObjLoaderTests.cpp
+    |-- RendererTests.cpp
+    `-- TestSceneTests.cpp
 ```
 
 ## 渲染流程
