@@ -2,7 +2,7 @@
 
 一个使用 C++20 和 Win32 API 编写的纯 CPU 软件光栅化渲染器。项目不依赖 Direct3D、OpenGL 或 Vulkan，而是在 CPU 侧实现从场景数据到窗口显示的核心渲染流程：顶点变换、视锥裁剪、三角形光栅化、深度测试、透视校正插值、纹理采样、法线贴图、多光源 Blinn-Phong 着色、阴影贴图和调试视图。
 
-当前仓库的 CMake 目标是 `CPURasterizer`，默认窗口大小为 960x540，画面通过 Win32 `StretchDIBits` 提交到窗口。
+当前 CMake 配置包含 `CPURasterizerCore` 静态库、`CPURasterizer` Windows GUI 程序和 `CPURasterizerTests` 测试目标；默认窗口大小为 960x540，画面通过 Win32 `StretchDIBits` 提交到窗口。
 
 ## 功能概览
 
@@ -58,6 +58,12 @@ cmake --build build --config Release
 .\build\Release\CPURasterizer.exe
 ```
 
+运行测试：
+
+```powershell
+ctest --test-dir build -C Release --output-on-failure
+```
+
 Debug 构建也可以运行：
 
 ```powershell
@@ -111,22 +117,28 @@ cmake --build build --config Debug
 
 ## 目录结构
 
+源码相关目录结构如下，省略 `build/` 等本地生成目录：
+
 ```text
 .
-|-- CMakeLists.txt          # CMake 工程入口，定义 CPURasterizer 目标
+|-- .gitignore              # 忽略本地构建和 IDE 产物
+|-- CMakeLists.txt          # CMake 工程入口，定义核心库、程序和测试目标
 |-- README.md               # 项目说明
 |-- docs/
 |   `-- images/             # README 截图
 |-- res/
 |   |-- Model/              # OBJ 模型资源
-|   `-- Texture/            # diffuse / normal 纹理资源
-`-- src/
-    |-- main.cpp            # Windows 入口
-    |-- core/               # Application、Camera、Framebuffer、Performance HUD
-    |-- math/               # 向量、矩阵和基础数学函数
-    |-- platform/           # Win32 窗口、输入和 framebuffer 提交
-    |-- renderer/           # 光栅化器、材质、纹理、OBJ 加载和顶点结构
-    `-- scenes/             # 默认测试场景、模型切换和 draw command 组织
+|   `-- Texture/            # 默认纹理及额外贴图资源
+|-- src/
+|   |-- main.cpp            # Windows 入口
+|   |-- core/               # Application、Camera、Framebuffer、Performance HUD
+|   |-- math/               # 向量、矩阵和基础数学函数
+|   |-- platform/           # Win32 窗口、输入和 framebuffer 提交
+|   |-- renderer/           # 光栅化器、pass、材质、纹理、OBJ 加载和顶点结构
+|   `-- scenes/             # 资源定位、场景预设、网格生成和 draw command 组织
+`-- tests/
+    |-- TestMain.cpp        # 测试入口
+    `-- *Tests.cpp          # AssetLocator、MeshFactory、ObjLoader、Renderer、TestScene 测试
 ```
 
 ## 渲染流程
@@ -149,7 +161,7 @@ flowchart LR
 
 ## 注意事项
 
-- 当前 CMake 配置没有测试目标；验证主要通过运行程序和调试视图观察。
+- CMake 已启用 CTest；`CPURasterizerTests` 覆盖资源定位、网格生成、OBJ 加载、渲染器基础行为和默认场景。
 - 仓库里的 `build/` 是本地生成目录，不是源码的一部分；重新配置时以根目录的 `CMakeLists.txt` 为准。
 - 资源路径以运行目录相对查找为主，从仓库根目录或常见 CMake 输出目录启动程序都能找到默认资源。
 - 项目定位是学习和展示 CPU 光栅化管线，不包含 GPU 后端或完整引擎封装。
