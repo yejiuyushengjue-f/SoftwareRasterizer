@@ -133,16 +133,18 @@ cmake --build build --config Debug
 
 ```mermaid
 flowchart LR
-    A["TestScene draw commands"] --> B["Model/View/Projection transform"]
-    B --> C["Frustum clipping"]
-    C --> D["Perspective divide and viewport mapping"]
-    D --> E["Triangle setup and tile binning"]
-    E --> F["Depth prepass"]
-    F --> G["Perspective-correct interpolation"]
-    G --> H["Texture and normal map sampling"]
-    H --> I["Lighting and shadow lookup"]
-    I --> J["Framebuffer write"]
-    J --> K["Win32 StretchDIBits present"]
+    A["TestScene draw commands"] --> B["Light-space shadow map pass"]
+    A --> C["Model/View/Projection transform"]
+    C --> D["Frustum clipping"]
+    D --> E["Perspective divide and viewport mapping"]
+    E --> F["Triangle setup and 32x32 tile coverage"]
+    F --> G["Camera-depth prepass into framebuffer"]
+    G --> H["Color/debug pass with depth test"]
+    H --> I["Perspective-correct interpolation"]
+    I --> J["Texture and normal map sampling"]
+    J --> K["Lighting and shadow-map lookup"]
+    K --> L["Framebuffer write"]
+    L --> M["Win32 StretchDIBits present"]
 ```
 
 ## 注意事项
