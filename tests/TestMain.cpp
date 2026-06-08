@@ -5,6 +5,7 @@ void runAssetLocatorTests();
 void runMeshFactoryTests();
 void runObjLoaderTests();
 void runRendererTests();
+void runThreadPoolTests();
 void runTestSceneTests();
 
 int main()
@@ -14,6 +15,7 @@ int main()
         runAssetLocatorTests();
         runMeshFactoryTests();
         runRendererTests();
+        runThreadPoolTests();
         runTestSceneTests();
     } catch (const std::exception& exception) {
         std::cerr << exception.what() << '\n';

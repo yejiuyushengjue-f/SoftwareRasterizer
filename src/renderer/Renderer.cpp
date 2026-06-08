@@ -12,7 +12,6 @@
 #include <cmath>
 #include <limits>
 #include <stdexcept>
-#include <thread>
 
 namespace sr {
 
@@ -638,108 +637,6 @@ const RendererStats& Renderer::stats() const
     return stats_;
 }
 
-Renderer::~Renderer()
-{
-    {
-        std::lock_guard<std::mutex> lock(workerMutex_);
-        stopWorkers_ = true;
-        ++workerGeneration_;
-    }
-    workerCv_.notify_all();
-    for (std::thread& worker : workerThreads_) {
-        if (worker.joinable()) {
-            worker.join();
-        }
-    }
-}
-
-void Renderer::ensureWorkerThreads(std::size_t tileCount)
-{
-    if (tileCount <= 1) {
-        return;
-    }
-
-    unsigned int hardware = std::thread::hardware_concurrency();
-    if (hardware == 0) {
-        hardware = 1;
-    }
-
-    const std::size_t targetWorkerCount = std::min<std::size_t>(tileCount, std::max<unsigned int>(1, hardware));
-    while (workerThreads_.size() < targetWorkerCount) {
-        const std::size_t workerIndex = workerThreads_.size();
-        workerThreads_.emplace_back([this, workerIndex] {
-            workerLoop(workerIndex);
-        });
-    }
-}
-
-void Renderer::runTileWorkers(std::size_t tileCount, std::function<void(std::size_t, std::size_t)> task)
-{
-    if (tileCount == 0) {
-        return;
-    }
-
-    ensureWorkerThreads(tileCount);
-    if (workerThreads_.empty()) {
-        task(0, 1);
-        return;
-    }
-
-    {
-        std::lock_guard<std::mutex> lock(workerMutex_);
-        tileTask_ = std::move(task);
-        activeWorkerCount_ = workerThreads_.size();
-        completedWorkerCount_ = 0;
-        taskAvailable_ = true;
-        ++workerGeneration_;
-    }
-
-    workerCv_.notify_all();
-
-    std::unique_lock<std::mutex> lock(workerMutex_);
-    mainCv_.wait(lock, [this] {
-        return completedWorkerCount_ >= activeWorkerCount_;
-    });
-    tileTask_ = {};
-    taskAvailable_ = false;
-}
-
-void Renderer::workerLoop(std::size_t workerIndex)
-{
-    std::uint64_t observedGeneration = 0;
-
-    for (;;) {
-        std::function<void(std::size_t, std::size_t)> task;
-        std::size_t activeWorkerCount = 0;
-        {
-            std::unique_lock<std::mutex> lock(workerMutex_);
-            workerCv_.wait(lock, [this, &observedGeneration] {
-                return stopWorkers_ || (taskAvailable_ && workerGeneration_ != observedGeneration);
-            });
-
-            if (stopWorkers_) {
-                return;
-            }
-
-            observedGeneration = workerGeneration_;
-            task = tileTask_;
-            activeWorkerCount = activeWorkerCount_;
-        }
-
-        if (task && workerIndex < activeWorkerCount) {
-            task(workerIndex, activeWorkerCount);
-        }
-
-        {
-            std::lock_guard<std::mutex> lock(workerMutex_);
-            ++completedWorkerCount_;
-            if (completedWorkerCount_ >= activeWorkerCount_) {
-                mainCv_.notify_one();
-            }
-        }
-    }
-}
-
 void Renderer::render(const RenderSceneView& scene, const Camera& camera, Framebuffer& framebuffer)
 {
     struct ThreadRenderStats {
@@ -885,8 +782,8 @@ void Renderer::render(const RenderSceneView& scene, const Camera& camera, Frameb
         }
     }
 
-    ensureWorkerThreads(tiles.size());
-    context.renderWorkerCount = tiles.empty() ? 0 : (workerThreads_.empty() ? 1 : workerThreads_.size());
+    tileWorkers_.ensureWorkerCount(tiles.size());
+    context.renderWorkerCount = tileWorkers_.activeWorkerCountFor(tiles.size());
 
     context.depthPrepass = [&](RenderContext& passContext) {
     const std::vector<PreparedTriangle>& preparedTriangles = passContext.preparedTriangles;
@@ -925,10 +822,8 @@ void Renderer::render(const RenderSceneView& scene, const Camera& camera, Frameb
         }
     };
 
-    runTileWorkers(tiles.size(), [&](std::size_t workerIndex, std::size_t activeWorkerCount) {
-        for (std::size_t tileIndex = workerIndex; tileIndex < tiles.size(); tileIndex += activeWorkerCount) {
-            rasterizeDepthTile(tileIndex);
-        }
+    tileWorkers_.parallelFor(tiles.size(), [&](std::size_t, std::size_t tileIndex) {
+        rasterizeDepthTile(tileIndex);
     });
     };
     depthPrepass.execute(context);
@@ -1081,11 +976,9 @@ void Renderer::render(const RenderSceneView& scene, const Camera& camera, Frameb
         }
     };
 
-    runTileWorkers(tiles.size(), [&](std::size_t workerIndex, std::size_t activeWorkerCount) {
+    tileWorkers_.parallelFor(tiles.size(), [&](std::size_t workerIndex, std::size_t tileIndex) {
         ThreadRenderStats& localStats = threadStats[workerIndex];
-        for (std::size_t tileIndex = workerIndex; tileIndex < tiles.size(); tileIndex += activeWorkerCount) {
-            rasterizeColorTile(tileIndex, localStats);
-        }
+        rasterizeColorTile(tileIndex, localStats);
     });
     };
     colorPass.execute(context);

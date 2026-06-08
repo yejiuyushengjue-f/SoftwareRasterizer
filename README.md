@@ -13,7 +13,7 @@
 - OBJ 加载：支持 Wavefront OBJ 的位置、UV、法线、负索引和多边形三角化，并可将模型归一化到场景尺寸。
 - CPU Shadow Mapping：从主方向光视角生成 512x512 深度图，主渲染阶段使用 bias 和 3x3 PCF 计算阴影因子。
 - 多光源着色：包含 3 个方向光和 2 个点光源，最终模式使用 Blinn-Phong 光照。
-- Tile-based 多线程主渲染：主 pass 使用 32x32 tile 分发到 `std::thread` 工作者。
+- Tile-based 多线程主渲染：主 pass 使用持久线程池和原子计数器动态领取 32x32 tile。
 - 性能 HUD：展示 FPS、帧耗时、Update/Render/HUD/Present、Shadow/Main Pass 耗时和渲染统计。
 - 调试视图：可在最终画面、Albedo、Normal、Depth、UV、Shadow Factor、Light 和 Light-space Depth 之间切换。
 
@@ -159,13 +159,14 @@ flowchart LR
     C --> D["Frustum clipping"]
     D --> E["Perspective divide and viewport mapping"]
     E --> F["Triangle setup and 32x32 tile coverage"]
-    F --> G["Camera-depth prepass into framebuffer"]
-    G --> H["Color/debug pass with depth test"]
-    H --> I["Perspective-correct interpolation"]
-    I --> J["Texture and normal map sampling"]
-    J --> K["Lighting and shadow-map lookup"]
-    K --> L["Framebuffer write"]
-    L --> M["Win32 StretchDIBits present"]
+    F --> G["Persistent thread pool with atomic tile scheduling"]
+    G --> H["Camera-depth prepass into framebuffer"]
+    H --> I["Color/debug pass with depth test"]
+    I --> J["Perspective-correct interpolation"]
+    J --> K["Texture and normal map sampling"]
+    K --> L["Lighting and shadow-map lookup"]
+    L --> M["Framebuffer write"]
+    M --> N["Win32 StretchDIBits present"]
 ```
 
 ## 注意事项

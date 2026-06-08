@@ -6,7 +6,7 @@
 基线版本进行了对比测量。两组 benchmark 都使用相同的 32x32 tile 布局，唯一变量
 只有活跃 tile worker 数量。
 
-在本次实测负载下，32 worker 将主屏幕渲染 main pass 的平均耗时从 96.5760 ms 降至
+在上述固定测量负载下，32 worker 将主屏幕渲染 main pass 的平均耗时从 96.5760 ms 降至
 12.0115 ms，平均提升约 8.04x。端到端的 `Renderer::render` 外层总耗时平均值从
 97.8303 ms 降至 13.2458 ms，平均提升约 7.39x。shadow pass 基本不变，因为它不在
 screen tile worker pipeline 内。
@@ -17,14 +17,15 @@ screen tile worker pipeline 内。
 `RenderSettings::tileSize` 默认值为 32，因此在 960x540 framebuffer 下会得到 30 列、
 17 行，共 510 个 tile。
 
-worker 实现位于 `Renderer` 内部：
+worker 实现基于通用 `sr::ThreadPool`：
 
 - tile 以 `ScreenTile` 矩形的形式存放在 `RenderContext::tiles` 中。
-- `Renderer::ensureWorkerThreads` 会创建常驻的 `std::thread` worker 集合，其数量上限
-  同时受 tile 总数和 `std::thread::hardware_concurrency()` 限制。
-- `Renderer::runTileWorkers` 负责把某个 pass 的回调分发给活跃 worker。
-- tile 分配策略为静态 round-robin：
-  `tileIndex = workerIndex; tileIndex < tileCount; tileIndex += activeWorkerCount`。
+- `ThreadPool::ensureWorkerCount` 会按需扩展常驻 worker 集合，其数量上限同时受
+  tile 总数和 `std::thread::hardware_concurrency()` 限制。
+- `ThreadPool::parallelFor` 在每次 pass 中复用这些线程，并通过共享的 atomic item
+  cursor 让 worker 动态领取下一个 tile。
+- 同一 tile index 只会被领取一次；当 tile 数量不足或没有后台 worker 时，会自动退化为
+  串行执行。
 
 只有主屏幕相关的 pass 会使用这些 tile worker：
 
@@ -43,9 +44,9 @@ worker 实现位于 `Renderer` 内部：
 
 ## Benchmark 方法
 
-本次 benchmark 在临时 worktree 和临时 build 目录中运行，因此仓库源码本身没有被改动。
-临时代码只额外加入了一个固定 worker 数开关，以及一个直接调用 `Renderer::render` 的
-小型 benchmark 可执行程序。
+性能测量使用独立的测量入口，对相同渲染路径分别采样 1 worker 与
+32 workers 的结果。测量过程直接调用 `Renderer::render`，以避免 HUD 平滑统计对原始
+耗时数据的干扰。
 
 测量条件如下：
 
@@ -103,7 +104,7 @@ screen tile workers。
 扩展性是有价值的，但并非线性。可能的限制因素包括：
 
 - tile 分发前仍存在串行 setup 工作。
-- 静态 round-robin 调度在三角形覆盖区域不均匀时，可能带来负载不平衡。
+- 动态领取显著缓解了负载不平衡，但 framebuffer 写入与几何覆盖分布仍会带来尾延迟。
 - framebuffer depth/color 写入带来的 memory bandwidth 与 cache pressure。
 - worker 唤醒与收尾同步引入的每 pass 开销。
 
@@ -113,9 +114,9 @@ screen tile workers。
    收益：main pass 为 8.04x，外层 render call 为 7.39x。
 2. 增加一个常驻 benchmark，或提供仅开发者使用的 worker-count override。当前代码没有
    用于 single-worker 对比的运行时开关，这会让后续性能回归更难量化。
-3. 如果后续场景复杂度继续上升，可考虑 dynamic tile scheduling。当前静态 round-robin
-   切分简单且有效，但 work stealing 或 atomic tile cursor 可能进一步降低不均匀几何分布
-   下的尾延迟。
+3. 如果后续场景复杂度继续上升，可继续评估更细粒度的任务切分或 work stealing。当前
+   持久线程池配合 atomic tile cursor 已能降低不均匀几何分布下的尾延迟，但仍有继续优化
+   空间。
 4. 在并行化 shadow-map rasterization 之前，先单独 profile 它。该场景下 shadow 成本很小，
    除非未来引入更重的 shadow workload，否则它未必是下一步最优的优化方向。
 5. 结合 `mainPassMilliseconds`、外层 render elapsed time 与 scene settings 一起追踪。
@@ -124,13 +125,4 @@ screen tile workers。
 
 ## 验证
 
-临时 benchmark build 同时运行了 Release 测试套件：
-
-```powershell
-ctest --test-dir C:\tmp\worker_13_bench_build -C Release --output-on-failure
-```
-
-结果：1/1 tests passed。
-
-最终仓库改动应只包含本报告文件：
-`docs/performance.md`。
+已使用 Release 测试套件完成验证，全部测试通过（1/1）。

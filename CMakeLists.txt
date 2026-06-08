@@ -15,6 +15,7 @@ add_library(CPURasterizerCore STATIC
     src/core/Camera.cpp
     src/core/Framebuffer.cpp
     src/core/PerformanceHud.cpp
+    src/core/ThreadPool.cpp
     src/platform/Win32Window.cpp
     src/renderer/ObjLoader.cpp
     src/renderer/RenderPasses.cpp
@@ -48,6 +49,7 @@ add_executable(CPURasterizerTests
     tests/MeshFactoryTests.cpp
     tests/ObjLoaderTests.cpp
     tests/RendererTests.cpp
+    tests/ThreadPoolTests.cpp
     tests/TestSceneTests.cpp
 )
 

@@ -1,16 +1,13 @@
 #pragma once
 
+#include "core/ThreadPool.h"
 #include "core/Camera.h"
 #include "core/Framebuffer.h"
 #include "renderer/RenderSceneView.h"
 #include "renderer/Vertex.h"
 
 #include <array>
-#include <condition_variable>
 #include <cstdint>
-#include <functional>
-#include <mutex>
-#include <thread>
 #include <vector>
 
 namespace sr {
@@ -57,7 +54,7 @@ struct RendererStats {
 class Renderer {
 public:
     Renderer() = default;
-    ~Renderer();
+    ~Renderer() = default;
     Renderer(const Renderer&) = delete;
     Renderer& operator=(const Renderer&) = delete;
     Renderer(Renderer&&) = delete;
@@ -79,20 +76,7 @@ private:
     ShadowMap shadowMap_;
     RenderMode renderMode_ = RenderMode::Final;
     RendererStats stats_;
-    std::vector<std::thread> workerThreads_;
-    std::mutex workerMutex_;
-    std::condition_variable workerCv_;
-    std::condition_variable mainCv_;
-    std::function<void(std::size_t, std::size_t)> tileTask_;
-    std::size_t activeWorkerCount_ = 0;
-    std::size_t completedWorkerCount_ = 0;
-    std::uint64_t workerGeneration_ = 0;
-    bool taskAvailable_ = false;
-    bool stopWorkers_ = false;
-
-    void ensureWorkerThreads(std::size_t tileCount);
-    void runTileWorkers(std::size_t tileCount, std::function<void(std::size_t, std::size_t)> task);
-    void workerLoop(std::size_t workerIndex);
+    ThreadPool tileWorkers_;
 
     void renderShadowMap(const RenderSceneView& scene, const Mat4& lightViewProjection, ShadowMap& shadowMap);
     void drawShadowTriangle(const Vertex* vertices, const Mat4& lightMvp, ShadowMap& shadowMap);
