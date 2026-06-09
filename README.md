@@ -125,7 +125,8 @@ cmake --build build --config Debug
 |-- CMakeLists.txt          # CMake 工程入口，定义核心库、程序和测试目标
 |-- README.md               # 项目说明
 |-- docs/
-|   `-- images/             # README 截图
+|   |-- images/             # README 截图
+|   `-- performance.md      # 分块多线程渲染性能分析
 |-- res/
 |   |-- Model/
 |   |   `-- Linnea.obj      # 默认示例 OBJ 模型
@@ -139,7 +140,15 @@ cmake --build build --config Debug
 |   |-- core/               # Application、Camera、Framebuffer、Performance HUD
 |   |-- math/               # 向量、矩阵和基础数学函数
 |   |-- platform/           # Win32 窗口、输入和 framebuffer 提交
-|   |-- renderer/           # 光栅化器、pass、材质、纹理、OBJ 加载和顶点结构
+|   |-- renderer/
+|   |   |-- Renderer.*              # 顶层渲染调度、模式切换和 pass 编排
+|   |   |-- TriangleRasterizer.*    # 裁剪、屏幕变换、三角形设置、深度和片元插值
+|   |   |-- ShadowMapper.*          # shadow map 生成、light-space 投影和 PCF 阴影因子
+|   |   |-- Shading.*               # 纹理/法线贴图、调试颜色和 Blinn-Phong 着色
+|   |   |-- TileScheduler.*         # 32x32 tile 生成与持久线程池动态调度
+|   |   |-- RenderStats.*           # 渲染统计结构和耗时换算
+|   |   |-- RasterHelpers.h         # edge function、重心权重和小型栅格化工具
+|   |   `-- pass、材质、纹理、OBJ 加载和顶点结构
 |   `-- scenes/             # 资源定位、场景预设、网格生成和 draw command 组织
 `-- tests/
     |-- TestMain.cpp        # 测试入口
@@ -147,7 +156,8 @@ cmake --build build --config Debug
     |-- MeshFactoryTests.cpp
     |-- ObjLoaderTests.cpp
     |-- RendererTests.cpp
-    `-- TestSceneTests.cpp
+    |-- TestSceneTests.cpp
+    `-- ThreadPoolTests.cpp
 ```
 
 ## 渲染流程

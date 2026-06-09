@@ -19,8 +19,13 @@ add_library(CPURasterizerCore STATIC
     src/platform/Win32Window.cpp
     src/renderer/ObjLoader.cpp
     src/renderer/RenderPasses.cpp
+    src/renderer/RenderStats.cpp
     src/renderer/Renderer.cpp
+    src/renderer/Shading.cpp
+    src/renderer/ShadowMapper.cpp
+    src/renderer/TileScheduler.cpp
     src/renderer/Texture.cpp
+    src/renderer/TriangleRasterizer.cpp
     src/scenes/AssetLocator.cpp
     src/scenes/LoadDiagnostics.cpp
     src/scenes/MeshFactory.cpp

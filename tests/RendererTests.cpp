@@ -5,6 +5,7 @@
 #include "scenes/MeshFactory.h"
 
 #include <cassert>
+#include <algorithm>
 #include <cstdint>
 #include <vector>
 
@@ -38,12 +39,23 @@ void runRendererTests()
 
     renderer.render(scene, camera, framebuffer);
     const sr::RendererStats& stats = renderer.stats();
+    (void)stats;
 
     assert(stats.drawCommands == 1);
     assert(stats.inputTriangles == static_cast<std::uint64_t>(cube.size() / 3));
     assert(stats.rasterizedTriangles > 0);
     assert(stats.shadedPixels > 0);
     assert(stats.colorPixelsWritten > 0);
+    assert(stats.shadowTriangles > 0);
+    assert(stats.shadowDepthWrites > 0);
     assert(stats.shadowPassMilliseconds >= 0.0);
     assert(stats.mainPassMilliseconds >= 0.0);
+
+    const std::uint32_t clearPixel = scene.settings.clearColor.toBGRA();
+    const std::uint32_t* pixels = framebuffer.pixels();
+    const int pixelCount = framebuffer.width() * framebuffer.height();
+    const bool hasWrittenPixel = std::any_of(pixels, pixels + pixelCount, [clearPixel](std::uint32_t pixel) {
+        return pixel != clearPixel;
+    });
+    assert(hasWrittenPixel);
 }
