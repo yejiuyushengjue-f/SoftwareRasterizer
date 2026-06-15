@@ -2,14 +2,15 @@
 
 ## 执行摘要
 
-本报告对当前采用 screen-tiled multithreaded 的渲染器，与 single-worker
+本报告对采用 screen-tiled multithreaded 的渲染器，与 single-worker
 基线版本进行了对比测量。两组 benchmark 都使用相同的 32x32 tile 布局，唯一变量
-只有活跃 tile worker 数量。
+只有活跃 tile worker 数量。当前代码还进一步将 shadow-map rasterization 纳入 tile
+并行路径；下方表格保留原 screen-tile benchmark 数据，用于说明主屏幕分块多线程收益。
 
 在上述固定测量负载下，32 worker 将主屏幕渲染 main pass 的平均耗时从 96.5760 ms 降至
 12.0115 ms，平均提升约 8.04x。端到端的 `Renderer::render` 外层总耗时平均值从
-97.8303 ms 降至 13.2458 ms，平均提升约 7.39x。shadow pass 基本不变，因为它不在
-screen tile worker pipeline 内。
+97.8303 ms 降至 13.2458 ms，平均提升约 7.39x。整体加速比仍然会受到串行几何准备、pass
+编排和最终 present 等阶段限制。
 
 ## 当前 Tile 多线程设计
 
@@ -27,15 +28,16 @@ worker 实现基于通用 `sr::ThreadPool`：
 - 同一 tile index 只会被领取一次；当 tile 数量不足或没有后台 worker 时，会自动退化为
   串行执行。
 
-只有主屏幕相关的 pass 会使用这些 tile worker：
+以下 pass 会使用这些 tile worker：
 
 - Depth prepass：将已准备好的三角形光栅化到 framebuffer depth buffer。
 - Color pass：执行 depth testing、插值、material sampling、lighting、shadow lookup、
   debug view 选择以及最终像素写入。
+- Shadow pass：先预投影有效的 light-space 三角形，再按 shadow-map tile 并行光栅化，
+  每个 worker 仅写入自己负责的 texel 范围。
 
 以下工作仍然是串行的，或不在 tile worker 的加速范围内：
 
-- Shadow-map rasterization。
 - Geometry preparation、clipping、screen-space triangle setup，以及 tile list 创建。
 - HUD 绘制与窗口 present。
 
@@ -91,9 +93,9 @@ main pass 成本的大约 12.4%。
 整次 render 调用的提升略低于 main pass，因为它仍然包含串行部分。外层
 `Renderer::render` 的实测平均加速比为 7.39x，而单看 main pass 的平均加速比为 8.04x。
 
-shadow pass 基本保持不变：1 worker 时为 0.8707 ms，32 workers 时为 0.8809 ms。
-这与实现机制一致：shadow-map 绘制走的是独立的串行 rasterization 路径，并不会调用
-screen tile workers。
+shadow pass 在这组 benchmark 数据中基本保持不变：1 worker 时为 0.8707 ms，32 workers
+时为 0.8809 ms。当前实现已经支持 tile 并行 shadow-map rasterization，但这组数据未单独
+量化该改动的收益；在默认场景中，整帧总耗时主要仍由主屏幕逐像素工作决定。
 
 因此可以明确地说，在当前测量条件下，32 worker 相比 1 worker：
 
@@ -117,8 +119,8 @@ screen tile workers。
 3. 如果后续场景复杂度继续上升，可继续评估更细粒度的任务切分或 work stealing。当前
    持久线程池配合 atomic tile cursor 已能降低不均匀几何分布下的尾延迟，但仍有继续优化
    空间。
-4. 在并行化 shadow-map rasterization 之前，先单独 profile 它。该场景下 shadow 成本很小，
-   除非未来引入更重的 shadow workload，否则它未必是下一步最优的优化方向。
+4. 继续单独 profile shadow pass。当前实现已经支持 tile 并行 shadow-map rasterization，
+   但该场景下 shadow 成本仍然较小，未来是否需要进一步细分任务粒度应以 profile 结果为准。
 5. 结合 `mainPassMilliseconds`、外层 render elapsed time 与 scene settings 一起追踪。
    单一 FPS 数字可能掩盖问题究竟来自 screen tiles、shadow rendering、geometry setup，
    还是 presentation。

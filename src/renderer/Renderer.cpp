@@ -96,9 +96,15 @@ void Renderer::render(const RenderSceneView& scene, const Camera& camera, Frameb
 
     context.primaryLight = &scene.settings.directionalLights[0];
     context.lightViewProjection = sceneLightViewProjection(scene.settings);
-    context.shadowPass = [](RenderContext& passContext) {
+    context.shadowPass = [this](RenderContext& passContext) {
         const auto shadowBegin = std::chrono::steady_clock::now();
-        renderShadowMap(passContext.scene, passContext.lightViewProjection, passContext.shadowMap, passContext.stats);
+        renderShadowMap(
+            passContext.scene,
+            passContext.lightViewProjection,
+            passContext.shadowMap,
+            passContext.stats,
+            shadowWorkers_,
+            passContext.scene.settings.tileSize);
         const auto shadowEnd = std::chrono::steady_clock::now();
         passContext.stats.shadowPassMilliseconds = elapsedRenderMilliseconds(shadowBegin, shadowEnd);
     };

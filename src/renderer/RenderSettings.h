@@ -20,9 +20,16 @@ struct PointLight {
     float range = 1.0f;
 };
 
+struct ToneMappingSettings {
+    bool enabled = true;
+    float exposure = 1.0f;
+    float gamma = 2.2f;
+};
+
 struct RenderSettings {
     Color clearColor = { 18, 20, 28, 255 };
     int tileSize = 32;
+    ToneMappingSettings toneMapping;
 
     std::array<DirectionalLight, 3> directionalLights = {};
     std::array<PointLight, 2> pointLights = {};

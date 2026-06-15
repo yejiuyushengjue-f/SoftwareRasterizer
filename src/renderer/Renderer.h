@@ -2,6 +2,7 @@
 
 #include "core/Camera.h"
 #include "core/Framebuffer.h"
+#include "core/ThreadPool.h"
 #include "renderer/RenderStats.h"
 #include "renderer/RenderSceneView.h"
 #include "renderer/ShadowMapper.h"
@@ -40,6 +41,7 @@ private:
     RenderMode renderMode_ = RenderMode::Final;
     RendererStats stats_;
     TileScheduler tileScheduler_;
+    ThreadPool shadowWorkers_;
 };
 
 } // namespace sr

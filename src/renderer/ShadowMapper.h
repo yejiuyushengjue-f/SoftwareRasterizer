@@ -1,7 +1,9 @@
 #pragma once
 
+#include "core/ThreadPool.h"
 #include "renderer/RenderSceneView.h"
 #include "renderer/RenderStats.h"
+#include "renderer/TileScheduler.h"
 
 #include <vector>
 
@@ -19,7 +21,13 @@ struct ShadowMap {
 };
 
 Mat4 sceneLightViewProjection(const RenderSettings& lighting);
-void renderShadowMap(const RenderSceneView& scene, const Mat4& lightViewProjection, ShadowMap& shadowMap, RendererStats& stats);
+void renderShadowMap(
+    const RenderSceneView& scene,
+    const Mat4& lightViewProjection,
+    ShadowMap& shadowMap,
+    RendererStats& stats,
+    ThreadPool& workers,
+    int tileSize);
 float shadowFactor(Vec3 worldPosition, Vec3 normal, const DirectionalLight& light, const Mat4& lightViewProjection, const ShadowMap& shadowMap, const RenderSettings& settings);
 float lightSpaceDepth01(Vec3 worldPosition, const Mat4& lightViewProjection, const ShadowMap& shadowMap);
 

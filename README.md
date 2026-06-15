@@ -1,6 +1,6 @@
 # CPU Rasterizer
 
-一个使用 C++20 和 Win32 API 编写的纯 CPU 软件光栅化渲染器。项目不依赖 Direct3D、OpenGL 或 Vulkan，而是在 CPU 侧实现从场景数据到窗口显示的核心渲染流程：顶点变换、视锥裁剪、三角形光栅化、深度测试、透视校正插值、纹理采样、法线贴图、多光源 Blinn-Phong 着色、阴影贴图和调试视图。
+一个使用 C++20 和 Win32 API 编写的纯 CPU 软件光栅化渲染器。项目不依赖 Direct3D、OpenGL 或 Vulkan，而是在 CPU 侧实现从场景数据到窗口显示的核心渲染流程：顶点变换、视锥裁剪、三角形光栅化、深度测试、透视校正插值、纹理采样、法线贴图、线性空间多光源 Blinn-Phong 着色、Reinhard tone mapping、阴影贴图和调试视图。
 
 当前 CMake 配置包含 `CPURasterizerCore` 静态库、`CPURasterizer` Windows GUI 程序和 `CPURasterizerTests` 测试目标；默认窗口大小为 960x540，画面通过 Win32 `StretchDIBits` 提交到窗口。
 
@@ -11,9 +11,10 @@
 - 透视校正插值：对 UV、法线、切线、世界坐标、视图坐标等属性执行基于 `1/w` 的插值。
 - 材质与纹理：支持 diffuse texture、normal map、环境光、漫反射、高光和 shininess 参数。
 - OBJ 加载：支持 Wavefront OBJ 的位置、UV、法线、负索引和多边形三角化，并可将模型归一化到场景尺寸。
-- CPU Shadow Mapping：从主方向光视角生成 512x512 深度图，主渲染阶段使用 bias 和 3x3 PCF 计算阴影因子。
-- 多光源着色：包含 3 个方向光和 2 个点光源，最终模式使用 Blinn-Phong 光照。
-- Tile-based 多线程主渲染：主 pass 使用持久线程池和原子计数器动态领取 32x32 tile。
+- CPU Shadow Mapping：从主方向光视角生成 512x512 深度图，shadow map 会先投影有效三角形，再按 tile 并行光栅化；主渲染阶段使用 bias 和 3x3 PCF 计算阴影因子。
+- 多光源着色：包含 3 个方向光和 2 个点光源，Final / Light 模式在 float linear RGB 中执行 Blinn-Phong 光照。
+- Tone Mapping：Final / Light 模式输出支持 exposure、固定 Reinhard tone mapping 和 gamma encode；Albedo / Normal / Depth / UV / Shadow / LightDepth 调试视图不做 tone mapping。
+- Tile-based 多线程主渲染：主 pass 与 shadow pass 都使用持久线程池和原子计数器动态领取 32x32 tile。
 - 性能 HUD：展示 FPS、帧耗时、Update/Render/HUD/Present、Shadow/Main Pass 耗时和渲染统计。
 - 调试视图：可在最终画面、Albedo、Normal、Depth、UV、Shadow Factor、Light 和 Light-space Depth 之间切换。
 
@@ -93,13 +94,13 @@ cmake --build build --config Debug
 
 | 按键 | 模式 | 说明 |
 | --- | --- | --- |
-| `1` | Final | 最终材质、纹理、光照和阴影结果 |
+| `1` | Final | 最终材质、纹理、光照、阴影和 tone mapping 结果 |
 | `2` | Albedo | diffuse 纹理、顶点颜色和材质颜色 |
 | `3` | Normal | 视图空间法线，包含 normal map 影响 |
 | `4` | Depth | 当前相机视角的 NDC 深度 |
 | `5` | UV | 纹理坐标可视化 |
 | `6` | Shadow Factor | bias 和 PCF 后的阴影因子 |
-| `7` | Light | 白色表面上的光照响应 |
+| `7` | Light | 白色表面上的光照响应，应用同 Final 一致的 display transform |
 | `8` | Light-space Depth | 像素投影到主方向光空间后的深度 |
 
 ## 场景与资源
@@ -143,8 +144,8 @@ cmake --build build --config Debug
 |   |-- renderer/
 |   |   |-- Renderer.*              # 顶层渲染调度、模式切换和 pass 编排
 |   |   |-- TriangleRasterizer.*    # 裁剪、屏幕变换、三角形设置、深度和片元插值
-|   |   |-- ShadowMapper.*          # shadow map 生成、light-space 投影和 PCF 阴影因子
-|   |   |-- Shading.*               # 纹理/法线贴图、调试颜色和 Blinn-Phong 着色
+|   |   |-- ShadowMapper.*          # shadow map 生成、light-space 投影、tile 并行光栅化和 PCF 阴影因子
+|   |   |-- Shading.*               # 纹理/法线贴图、调试颜色、线性空间 Blinn-Phong 着色与 tone mapping
 |   |   |-- TileScheduler.*         # 32x32 tile 生成与持久线程池动态调度
 |   |   |-- RenderStats.*           # 渲染统计结构和耗时换算
 |   |   |-- RasterHelpers.h         # edge function、重心权重和小型栅格化工具
