@@ -80,8 +80,8 @@ void Application::update(float deltaSeconds)
     if (input.togglePerformanceHud) {
         performanceHudVisible_ = !performanceHudVisible_;
     }
-    if (input.toggleModel) {
-        scene_.toggleModel();
+    if (input.toggleExhibitRotation) {
+        scene_.toggleExhibitRotation();
     }
     resizeFramebufferToWindow();
 

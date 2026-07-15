@@ -2,6 +2,8 @@
 
 #include "math/Math.h"
 
+#include <algorithm>
+#include <array>
 #include <cstddef>
 
 namespace sr::MeshFactory {
@@ -27,6 +29,45 @@ void addQuad(std::vector<Vertex>& vertices, Vec3 a, Vec3 b, Vec3 c, Vec3 d, Vec3
     vertices.push_back(makeVertex(a, { 0.0f, 0.0f }, normal));
     vertices.push_back(makeVertex(c, { 1.0f, 1.0f }, normal));
     vertices.push_back(makeVertex(d, { 0.0f, 1.0f }, normal));
+}
+
+void addQuad(std::vector<Vertex>& vertices, Vec3 a, Vec3 b, Vec3 c, Vec3 d, Vec3 normal, Vec2 uvMin, Vec2 uvMax)
+{
+    vertices.push_back(makeVertex(a, { uvMin.x, uvMin.y }, normal));
+    vertices.push_back(makeVertex(b, { uvMax.x, uvMin.y }, normal));
+    vertices.push_back(makeVertex(c, { uvMax.x, uvMax.y }, normal));
+
+    vertices.push_back(makeVertex(a, { uvMin.x, uvMin.y }, normal));
+    vertices.push_back(makeVertex(c, { uvMax.x, uvMax.y }, normal));
+    vertices.push_back(makeVertex(d, { uvMin.x, uvMax.y }, normal));
+}
+
+void addTriangleFan(std::vector<Vertex>& vertices, Vec3 center, float y, float radius, int segments, bool topCap)
+{
+    const Vec3 normal = topCap ? Vec3 { 0.0f, 1.0f, 0.0f } : Vec3 { 0.0f, -1.0f, 0.0f };
+    const float direction = topCap ? 1.0f : -1.0f;
+    const Vertex centerVertex = makeVertex(center, { 0.5f, 0.5f }, normal);
+
+    for (int i = 0; i < segments; ++i) {
+        const float u0 = static_cast<float>(i) / static_cast<float>(segments);
+        const float u1 = static_cast<float>(i + 1) / static_cast<float>(segments);
+        const float angle0 = u0 * 2.0f * pi;
+        const float angle1 = u1 * 2.0f * pi;
+        const Vec3 p0 { std::cos(angle0) * radius, y, std::sin(angle0) * radius };
+        const Vec3 p1 { std::cos(angle1) * radius, y, std::sin(angle1) * radius };
+        const Vertex edge0 = makeVertex(
+            p0,
+            { 0.5f + std::cos(angle0) * 0.5f, 0.5f + std::sin(angle0) * 0.5f * direction },
+            normal);
+        const Vertex edge1 = makeVertex(
+            p1,
+            { 0.5f + std::cos(angle1) * 0.5f, 0.5f + std::sin(angle1) * 0.5f * direction },
+            normal);
+
+        vertices.push_back(centerVertex);
+        vertices.push_back(topCap ? edge1 : edge0);
+        vertices.push_back(topCap ? edge0 : edge1);
+    }
 }
 
 } // namespace
@@ -77,16 +118,95 @@ std::vector<Vertex> makeSphere(float radius, int latitudeSegments, int longitude
 
 std::vector<Vertex> makeCube(float size)
 {
-    const float h = size * 0.5f;
+    return makeBox({ size, size, size });
+}
+
+std::vector<Vertex> makeBox(Vec3 size)
+{
+    const float hx = size.x * 0.5f;
+    const float hy = size.y * 0.5f;
+    const float hz = size.z * 0.5f;
     std::vector<Vertex> vertices;
     vertices.reserve(36);
 
-    addQuad(vertices, { -h, -h, h }, { h, -h, h }, { h, h, h }, { -h, h, h }, { 0.0f, 0.0f, 1.0f });
-    addQuad(vertices, { h, -h, -h }, { -h, -h, -h }, { -h, h, -h }, { h, h, -h }, { 0.0f, 0.0f, -1.0f });
-    addQuad(vertices, { -h, -h, -h }, { -h, -h, h }, { -h, h, h }, { -h, h, -h }, { -1.0f, 0.0f, 0.0f });
-    addQuad(vertices, { h, -h, h }, { h, -h, -h }, { h, h, -h }, { h, h, h }, { 1.0f, 0.0f, 0.0f });
-    addQuad(vertices, { -h, h, h }, { h, h, h }, { h, h, -h }, { -h, h, -h }, { 0.0f, 1.0f, 0.0f });
-    addQuad(vertices, { -h, -h, -h }, { h, -h, -h }, { h, -h, h }, { -h, -h, h }, { 0.0f, -1.0f, 0.0f });
+    addQuad(vertices, { -hx, -hy, hz }, { hx, -hy, hz }, { hx, hy, hz }, { -hx, hy, hz }, { 0.0f, 0.0f, 1.0f });
+    addQuad(vertices, { hx, -hy, -hz }, { -hx, -hy, -hz }, { -hx, hy, -hz }, { hx, hy, -hz }, { 0.0f, 0.0f, -1.0f });
+    addQuad(vertices, { -hx, -hy, -hz }, { -hx, -hy, hz }, { -hx, hy, hz }, { -hx, hy, -hz }, { -1.0f, 0.0f, 0.0f });
+    addQuad(vertices, { hx, -hy, hz }, { hx, -hy, -hz }, { hx, hy, -hz }, { hx, hy, hz }, { 1.0f, 0.0f, 0.0f });
+    addQuad(vertices, { -hx, hy, hz }, { hx, hy, hz }, { hx, hy, -hz }, { -hx, hy, -hz }, { 0.0f, 1.0f, 0.0f });
+    addQuad(vertices, { -hx, -hy, -hz }, { hx, -hy, -hz }, { hx, -hy, hz }, { -hx, -hy, hz }, { 0.0f, -1.0f, 0.0f });
+
+    assignMeshTangents(vertices.data(), static_cast<int>(vertices.size()));
+    return vertices;
+}
+
+std::vector<Vertex> makePanel(float width, float height)
+{
+    const float halfWidth = width * 0.5f;
+    const float halfHeight = height * 0.5f;
+    std::vector<Vertex> vertices;
+    vertices.reserve(6);
+
+    addQuad(
+        vertices,
+        { -halfWidth, -halfHeight, 0.0f },
+        { halfWidth, -halfHeight, 0.0f },
+        { halfWidth, halfHeight, 0.0f },
+        { -halfWidth, halfHeight, 0.0f },
+        { 0.0f, 0.0f, 1.0f },
+        { 0.0f, 0.0f },
+        { width * 0.25f, height * 0.25f });
+
+    assignMeshTangents(vertices.data(), static_cast<int>(vertices.size()));
+    return vertices;
+}
+
+std::vector<Vertex> makeShowcaseSculpture(float height, float baseRadius, float bodyRadius, float neckRadius, int segments)
+{
+    const int safeSegments = std::max(3, segments);
+    const float shoulderRadius = bodyRadius * 0.72f;
+    const float shoulderHeight = height * 0.64f;
+    const float bodyHeight = height * 0.28f;
+    const float neckHeight = height * 0.82f;
+    const std::array<float, 5> ringHeights { 0.0f, bodyHeight, shoulderHeight, neckHeight, height };
+    const std::array<float, 5> ringRadii { baseRadius, bodyRadius, shoulderRadius, neckRadius, neckRadius * 0.84f };
+
+    std::vector<Vertex> vertices;
+    vertices.reserve(static_cast<std::size_t>(safeSegments) * (ringHeights.size() - 1u) * 6u + static_cast<std::size_t>(safeSegments) * 6u);
+
+    for (std::size_t ring = 0; ring + 1 < ringHeights.size(); ++ring) {
+        for (int segment = 0; segment < safeSegments; ++segment) {
+            const float u0 = static_cast<float>(segment) / static_cast<float>(safeSegments);
+            const float u1 = static_cast<float>(segment + 1) / static_cast<float>(safeSegments);
+            const float angle0 = u0 * 2.0f * pi;
+            const float angle1 = u1 * 2.0f * pi;
+
+            const float y0 = ringHeights[ring];
+            const float y1 = ringHeights[ring + 1];
+            const float r0 = ringRadii[ring];
+            const float r1 = ringRadii[ring + 1];
+            const float slope = (r0 - r1) / std::max(0.0001f, y1 - y0);
+
+            const Vec3 normal0 = normalize({ std::cos(angle0), slope, std::sin(angle0) });
+            const Vec3 normal1 = normalize({ std::cos(angle1), slope, std::sin(angle1) });
+
+            const Vec3 a { std::cos(angle0) * r0, y0, std::sin(angle0) * r0 };
+            const Vec3 b { std::cos(angle1) * r0, y0, std::sin(angle1) * r0 };
+            const Vec3 c { std::cos(angle1) * r1, y1, std::sin(angle1) * r1 };
+            const Vec3 d { std::cos(angle0) * r1, y1, std::sin(angle0) * r1 };
+
+            vertices.push_back(makeVertex(a, { u0, y0 / height }, normal0));
+            vertices.push_back(makeVertex(c, { u1, y1 / height }, normal1));
+            vertices.push_back(makeVertex(b, { u1, y0 / height }, normal1));
+
+            vertices.push_back(makeVertex(a, { u0, y0 / height }, normal0));
+            vertices.push_back(makeVertex(d, { u0, y1 / height }, normal0));
+            vertices.push_back(makeVertex(c, { u1, y1 / height }, normal1));
+        }
+    }
+
+    addTriangleFan(vertices, { 0.0f, 0.0f, 0.0f }, 0.0f, baseRadius, safeSegments, false);
+    addTriangleFan(vertices, { 0.0f, height, 0.0f }, height, ringRadii.back(), safeSegments, true);
 
     assignMeshTangents(vertices.data(), static_cast<int>(vertices.size()));
     return vertices;

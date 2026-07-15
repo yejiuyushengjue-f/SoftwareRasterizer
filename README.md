@@ -12,7 +12,7 @@
 - 材质与纹理：支持 diffuse texture、normal map、环境光、漫反射、高光和 shininess 参数。
 - OBJ 加载：支持 Wavefront OBJ 的位置、UV、法线、负索引和多边形三角化，并可将模型归一化到场景尺寸。
 - CPU Shadow Mapping：从主方向光视角生成 512x512 深度图，shadow map 会先投影有效三角形，再按 tile 并行光栅化；主渲染阶段使用 bias 和 3x3 PCF 计算阴影因子。
-- 多光源着色：包含 3 个方向光和 2 个点光源，Final / Light 模式在 float linear RGB 中执行 Blinn-Phong 光照。
+- 多光源着色：渲染器最多支持 3 个方向光和 2 个点光源；当前展厅启用 1 个方向光和 1 个暖色点光源，Final / Light 模式在 float linear RGB 中执行 Blinn-Phong 光照。
 - Tone Mapping：Final / Light 模式输出支持 exposure、固定 Reinhard tone mapping 和 gamma encode；Albedo / Normal / Depth / UV / Shadow / LightDepth 调试视图不做 tone mapping。
 - Tile-based 多线程主渲染：主 pass 与 shadow pass 都使用持久线程池和原子计数器动态领取 32x32 tile。
 - 性能 HUD：展示 FPS、帧耗时、Update/Render/HUD/Present、Shadow/Main Pass 耗时和渲染统计。
@@ -87,7 +87,7 @@ cmake --build build --config Debug
 | 鼠标右键拖动 | 旋转视角 |
 | `1` 到 `8` | 切换渲染模式 / 调试视图 |
 | `F2` | 显示或隐藏性能 HUD |
-| `F3` | 在内置球体和可用 OBJ 模型之间切换 |
+| `F3` | 暂停或继续中央展品旋转 |
 | `F11` 或 `Alt+Enter` | 切换全屏 |
 
 渲染模式对应关系：
@@ -105,16 +105,16 @@ cmake --build build --config Debug
 
 ## 场景与资源
 
-默认场景由 3 个 draw command 组成：可切换的主模型、一个带法线贴图的立方体和一个地面平面。
+默认场景是一间现代室内模型展厅，由 8 个 draw command 组成：地面、后墙、左右侧墙、中央展台与展品、长凳和高立方柱。地面同时使用漫反射贴图与法线贴图，中央展品、展台和几何体会在墙面与地面上形成清晰阴影；不同物体使用金属、石材、墙面和强调色等不同材质。
 
 运行时会在当前目录及上级构建目录附近查找资源：
 
 - `res/Texture/Frosted Metal Texture.jpeg`
 - `res/Texture/Cobblestone_pavement_texture.jpeg`
 - `res/Texture/Cobblestone_pavement_normal_texture.png`
-- `res/Model/Linnea.obj`
+- `res/Model/Showcase.obj`（可选的中央展示模型）
 
-如果纹理加载失败，程序会回退到内置棋盘格纹理。如果找不到可用 OBJ，场景会继续使用内置球体。OBJ 搜索目录包括 `res/Model` 和 `res/Models` 及其若干上级相对路径。
+如果纹理加载失败，程序会回退到内置棋盘格纹理。中央模型只会查找文件名精确匹配的 `Showcase.obj`；未提供该文件时，场景使用内置低多边形雕塑占位，不会自动加载目录中的其他 OBJ。OBJ 搜索目录包括 `res/Model` 和 `res/Models` 及其若干上级相对路径。
 
 ## 目录结构
 
@@ -129,8 +129,7 @@ cmake --build build --config Debug
 |   |-- images/             # README 截图
 |   `-- performance.md      # 分块多线程渲染性能分析
 |-- res/
-|   |-- Model/
-|   |   `-- Linnea.obj      # 默认示例 OBJ 模型
+|   |-- Model/             # 可放置可选的 Showcase.obj
 |   `-- Texture/
 |       |-- Frosted Metal Texture.jpeg                  # 金属材质默认贴图
 |       |-- Cobblestone_pavement_texture.jpeg          # 地面漫反射贴图

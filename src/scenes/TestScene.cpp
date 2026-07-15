@@ -5,6 +5,7 @@
 #include "math/Math.h"
 #include "renderer/ObjLoader.h"
 
+#include <cmath>
 #include <filesystem>
 #include <stdexcept>
 #include <string>
@@ -43,22 +44,9 @@ Texture loadTextureOrCheckerboard(const wchar_t* fileName, int checkerCells, Loa
     }
 }
 
-std::filesystem::path findObjPath(const wchar_t* preferredObj)
-{
-    std::filesystem::path path = AssetLocator::findModel(preferredObj);
-    if (!path.empty()) {
-        return path;
-    }
-    path = AssetLocator::findFirstModelWithExtension(L".obj");
-    if (!path.empty()) {
-        return path;
-    }
-    return AssetLocator::findFirstModelWithExtension(L".OBJ");
-}
-
 std::vector<Vertex> loadObjModel(const ScenePreset& preset, bool& objModelAvailable, LoadDiagnostics& diagnostics)
 {
-    const std::filesystem::path objPath = findObjPath(preset.model.preferredObj);
+    const std::filesystem::path objPath = AssetLocator::findModel(preset.model.preferredObj);
     if (objPath.empty()) {
         objModelAvailable = false;
         diagnostics.recordObjFailure(wideToUtf8(preset.model.preferredObj), "file not found");
@@ -83,39 +71,71 @@ std::vector<Vertex> loadObjModel(const ScenePreset& preset, bool& objModelAvaila
 
 TestScene::TestScene()
     : preset_(ScenePreset::defaults())
-    , modelTexture_(loadTextureOrCheckerboard(preset_.textures.modelDiffuse, 10, diagnostics_))
-    , cubeTexture_(loadTextureOrCheckerboard(preset_.textures.cubeDiffuse, 8, diagnostics_))
-    , normalTexture_(loadTextureOrCheckerboard(preset_.textures.cubeNormal, 8, diagnostics_))
-    , modelMaterial_(preset_.modelMaterial)
-    , cubeMaterial_(preset_.cubeMaterial)
-    , groundMaterial_(preset_.groundMaterial)
-    , sphereMesh_(MeshFactory::makeSphere(preset_.meshes.sphereRadius, preset_.meshes.sphereLatitudeSegments, preset_.meshes.sphereLongitudeSegments))
+    , sculptureTexture_(loadTextureOrCheckerboard(preset_.textures.sculptureDiffuse, 10, diagnostics_))
+    , floorTexture_(loadTextureOrCheckerboard(preset_.textures.floorDiffuse, 8, diagnostics_))
+    , floorNormalTexture_(loadTextureOrCheckerboard(preset_.textures.floorNormal, 8, diagnostics_))
+    , centralMaterial_(preset_.centralMaterial)
+    , pedestalMaterial_(preset_.pedestalMaterial)
+    , floorMaterial_(preset_.floorMaterial)
+    , wallMaterial_(preset_.wallMaterial)
+    , accentMaterial_(preset_.accentMaterial)
+    , monolithMaterial_(preset_.monolithMaterial)
+    , sculptureMesh_(MeshFactory::makeShowcaseSculpture(
+        preset_.meshes.sculptureHeight,
+        preset_.meshes.sculptureBaseRadius,
+        preset_.meshes.sculptureBodyRadius,
+        preset_.meshes.sculptureNeckRadius,
+        preset_.meshes.sculptureSegments))
     , objMesh_(loadObjModel(preset_, objModelAvailable_, diagnostics_))
-    , cubeMesh_(MeshFactory::makeCube(preset_.meshes.cubeSize))
-    , groundMesh_(MeshFactory::makeGround())
+    , floorMesh_(MeshFactory::makePanel(preset_.meshes.floorWidth, preset_.meshes.floorDepth))
+    , wallMesh_(MeshFactory::makePanel(preset_.meshes.wallWidth, preset_.meshes.wallHeight))
+    , pedestalMesh_(MeshFactory::makeBox(preset_.meshes.pedestalSize))
+    , benchMesh_(MeshFactory::makeBox(preset_.meshes.benchSize))
+    , monolithMesh_(MeshFactory::makeBox(preset_.meshes.monolithSize))
 {
-    modelMaterial_.diffuseTexture = &modelTexture_;
-    cubeMaterial_.diffuseTexture = &cubeTexture_;
-    cubeMaterial_.normalTexture = &normalTexture_;
-    commands_[0].material = modelMaterial_;
-    applyActiveModel();
-    commands_[1].mesh = Mesh { cubeMesh_.data(), static_cast<int>(cubeMesh_.size()) };
-    commands_[1].material = cubeMaterial_;
-    commands_[1].castsShadow = true;
-    commands_[2].mesh = Mesh { groundMesh_.data(), static_cast<int>(groundMesh_.size()) };
-    commands_[2].material = groundMaterial_;
-    commands_[2].castsShadow = false;
+    usingObjModel_ = objModelAvailable_;
+
+    centralMaterial_.diffuseTexture = &sculptureTexture_;
+    pedestalMaterial_.diffuseTexture = &sculptureTexture_;
+    floorMaterial_.diffuseTexture = &floorTexture_;
+    floorMaterial_.normalTexture = &floorNormalTexture_;
+
+    commands_[Floor].mesh = Mesh { floorMesh_.data(), static_cast<int>(floorMesh_.size()) };
+    commands_[Floor].material = floorMaterial_;
+    commands_[Floor].castsShadow = false;
+
+    commands_[BackWall].mesh = Mesh { wallMesh_.data(), static_cast<int>(wallMesh_.size()) };
+    commands_[BackWall].material = wallMaterial_;
+    commands_[BackWall].castsShadow = false;
+
+    commands_[LeftWall].mesh = Mesh { wallMesh_.data(), static_cast<int>(wallMesh_.size()) };
+    commands_[LeftWall].material = wallMaterial_;
+    commands_[LeftWall].castsShadow = false;
+
+    commands_[RightWall].mesh = Mesh { wallMesh_.data(), static_cast<int>(wallMesh_.size()) };
+    commands_[RightWall].material = wallMaterial_;
+    commands_[RightWall].castsShadow = false;
+
+    commands_[Pedestal].mesh = Mesh { pedestalMesh_.data(), static_cast<int>(pedestalMesh_.size()) };
+    commands_[Pedestal].material = pedestalMaterial_;
+    commands_[Pedestal].castsShadow = true;
+
+    commands_[AccentBench].mesh = Mesh { benchMesh_.data(), static_cast<int>(benchMesh_.size()) };
+    commands_[AccentBench].material = accentMaterial_;
+    commands_[AccentBench].castsShadow = true;
+
+    commands_[AccentMonolith].mesh = Mesh { monolithMesh_.data(), static_cast<int>(monolithMesh_.size()) };
+    commands_[AccentMonolith].material = monolithMaterial_;
+    commands_[AccentMonolith].castsShadow = true;
+
+    applyCentralExhibit();
+    setupStaticCommands();
+    updateCentralTransform();
 }
 
-void TestScene::toggleModel()
+void TestScene::toggleExhibitRotation()
 {
-    if (usingObjModel_) {
-        usingObjModel_ = false;
-    } else if (objModelAvailable_) {
-        usingObjModel_ = true;
-    }
-
-    applyActiveModel();
+    exhibitRotationPaused_ = !exhibitRotationPaused_;
 }
 
 RenderSceneView TestScene::renderView() const
@@ -131,30 +151,46 @@ const char* TestScene::activeModelName() const
     return usingObjModel_ && objModelAvailable_ ? preset_.model.displayName : preset_.model.builtinDisplayName;
 }
 
-void TestScene::applyActiveModel()
+void TestScene::applyCentralExhibit()
 {
-    const std::vector<Vertex>& activeMesh = usingObjModel_ && objModelAvailable_ ? objMesh_ : sphereMesh_;
+    const std::vector<Vertex>& activeMesh = usingObjModel_ && objModelAvailable_ ? objMesh_ : sculptureMesh_;
     if (activeMesh.empty()) {
-        commands_[0].mesh = {};
-        commands_[0].castsShadow = false;
+        commands_[CentralExhibit].mesh = {};
+        commands_[CentralExhibit].castsShadow = false;
         return;
     }
 
-    commands_[0].mesh = Mesh { activeMesh.data(), static_cast<int>(activeMesh.size()) };
-    commands_[0].castsShadow = !usingObjModel_;
+    commands_[CentralExhibit].mesh = Mesh { activeMesh.data(), static_cast<int>(activeMesh.size()) };
+    commands_[CentralExhibit].material = centralMaterial_;
+    commands_[CentralExhibit].castsShadow = true;
+}
+
+void TestScene::setupStaticCommands()
+{
+    commands_[Floor].transform = Mat4::translation({ 0.0f, -1.0f, -4.1f }) * Mat4::rotationX(-pi * 0.5f);
+    commands_[BackWall].transform = Mat4::translation({ 0.0f, 1.25f, -7.65f });
+    commands_[LeftWall].transform = Mat4::translation({ -4.5f, 1.25f, -4.1f }) * Mat4::rotationY(pi * 0.5f);
+    commands_[RightWall].transform = Mat4::translation({ 4.5f, 1.25f, -4.1f }) * Mat4::rotationY(-pi * 0.5f);
+    commands_[Pedestal].transform = Mat4::translation({ 0.0f, -0.64f, -3.75f });
+    commands_[AccentBench].transform = Mat4::translation({ -2.05f, -0.74f, -4.55f }) * Mat4::rotationY(0.35f);
+    commands_[AccentMonolith].transform = Mat4::translation({ 2.2f, -0.11f, -4.95f }) * Mat4::rotationY(-0.28f);
+}
+
+void TestScene::updateCentralTransform()
+{
+    const float exhibitY = usingObjModel_ && objModelAvailable_ ? 0.67f : -0.28f;
+    commands_[CentralExhibit].transform = Mat4::translation({ 0.0f, exhibitY, -3.75f })
+        * Mat4::rotationY(exhibitRotationAngle_)
+        * Mat4::rotationX(-0.08f);
 }
 
 void TestScene::update(float deltaSeconds)
 {
-    rotation_ += deltaSeconds;
-    commands_[0].transform = Mat4::translation({ -0.52f, 0.02f, -2.25f })
-        * Mat4::rotationY(rotation_ * (usingObjModel_ ? preset_.animation.objRotationSpeed : preset_.animation.sphereRotationSpeed))
-        * Mat4::rotationX(usingObjModel_ ? 0.0f : std::sin(rotation_ * preset_.animation.sphereWobbleSpeed) * preset_.animation.sphereWobbleAmount);
-    commands_[1].transform = Mat4::translation({ 0.58f, -0.02f, -3.75f })
-        * Mat4::rotationY(rotation_ * preset_.animation.cubeRotationSpeed)
-        * Mat4::rotationX(0.45f)
-        * Mat4::rotationZ(0.18f);
-    commands_[2].transform = Mat4::identity();
+    if (!exhibitRotationPaused_ && std::isfinite(deltaSeconds) && deltaSeconds > 0.0f) {
+        exhibitRotationAngle_ += deltaSeconds * preset_.animation.centralRotationSpeed;
+    }
+
+    updateCentralTransform();
 }
 
 } // namespace sr
