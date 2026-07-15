@@ -67,6 +67,13 @@ std::vector<Vertex> loadObjModel(const ScenePreset& preset, bool& objModelAvaila
     }
 }
 
+void configureCommand(DrawCommand& command, const std::vector<Vertex>& vertices, const Material& material, bool castsShadow)
+{
+    command.mesh = Mesh { vertices.data(), static_cast<int>(vertices.size()) };
+    command.material = material;
+    command.castsShadow = castsShadow;
+}
+
 } // namespace
 
 TestScene::TestScene()
@@ -78,8 +85,11 @@ TestScene::TestScene()
     , pedestalMaterial_(preset_.pedestalMaterial)
     , floorMaterial_(preset_.floorMaterial)
     , wallMaterial_(preset_.wallMaterial)
+    , doorMaterial_(preset_.doorMaterial)
     , accentMaterial_(preset_.accentMaterial)
     , monolithMaterial_(preset_.monolithMaterial)
+    , pointLightMarkerMaterial_(preset_.pointLightMarkerMaterial)
+    , directionalLightMarkerMaterial_(preset_.directionalLightMarkerMaterial)
     , sculptureMesh_(MeshFactory::makeShowcaseSculpture(
         preset_.meshes.sculptureHeight,
         preset_.meshes.sculptureBaseRadius,
@@ -87,11 +97,42 @@ TestScene::TestScene()
         preset_.meshes.sculptureNeckRadius,
         preset_.meshes.sculptureSegments))
     , objMesh_(loadObjModel(preset_, objModelAvailable_, diagnostics_))
-    , floorMesh_(MeshFactory::makePanel(preset_.meshes.floorWidth, preset_.meshes.floorDepth))
-    , wallMesh_(MeshFactory::makePanel(preset_.meshes.wallWidth, preset_.meshes.wallHeight))
+    , floorMesh_(MeshFactory::makePanel(preset_.meshes.floorWidth, preset_.meshes.floorDepth + preset_.meshes.frontWallOffset))
+    , backWallMesh_(MeshFactory::makeBox({
+        preset_.meshes.wallWidth,
+        preset_.meshes.wallHeight,
+        preset_.meshes.wallThickness }))
+    , sideWallMesh_(MeshFactory::makeBox({
+        preset_.meshes.wallThickness,
+        preset_.meshes.wallHeight,
+        preset_.meshes.floorDepth + preset_.meshes.frontWallOffset }))
+    , roofMesh_(MeshFactory::makeBox({
+        preset_.meshes.wallWidth + preset_.meshes.wallThickness * 2.0f,
+        preset_.meshes.roofThickness,
+        preset_.meshes.floorDepth + preset_.meshes.frontWallOffset + preset_.meshes.wallThickness * 2.0f }))
+    , frontSideWallMesh_(MeshFactory::makeBox({
+        (preset_.meshes.wallWidth - preset_.meshes.doorWidth) * 0.5f,
+        preset_.meshes.wallHeight,
+        preset_.meshes.wallThickness }))
+    , frontTopWallMesh_(MeshFactory::makeBox({
+        preset_.meshes.doorWidth,
+        preset_.meshes.wallHeight - preset_.meshes.doorHeight,
+        preset_.meshes.wallThickness }))
+    , doorMesh_(MeshFactory::makeBox({
+        preset_.meshes.doorWidth * 0.92f,
+        preset_.meshes.doorHeight,
+        preset_.meshes.doorThickness }))
     , pedestalMesh_(MeshFactory::makeBox(preset_.meshes.pedestalSize))
     , benchMesh_(MeshFactory::makeBox(preset_.meshes.benchSize))
     , monolithMesh_(MeshFactory::makeBox(preset_.meshes.monolithSize))
+    , pointLightMarkerMesh_(MeshFactory::makeSphere(
+        preset_.meshes.pointLightMarkerRadius,
+        preset_.meshes.lightMarkerLatitudeSegments,
+        preset_.meshes.lightMarkerLongitudeSegments))
+    , directionalLightMarkerMesh_(MeshFactory::makeSphere(
+        preset_.meshes.directionalLightMarkerRadius,
+        preset_.meshes.lightMarkerLatitudeSegments,
+        preset_.meshes.lightMarkerLongitudeSegments))
 {
     usingObjModel_ = objModelAvailable_;
 
@@ -100,33 +141,20 @@ TestScene::TestScene()
     floorMaterial_.diffuseTexture = &floorTexture_;
     floorMaterial_.normalTexture = &floorNormalTexture_;
 
-    commands_[Floor].mesh = Mesh { floorMesh_.data(), static_cast<int>(floorMesh_.size()) };
-    commands_[Floor].material = floorMaterial_;
-    commands_[Floor].castsShadow = false;
-
-    commands_[BackWall].mesh = Mesh { wallMesh_.data(), static_cast<int>(wallMesh_.size()) };
-    commands_[BackWall].material = wallMaterial_;
-    commands_[BackWall].castsShadow = false;
-
-    commands_[LeftWall].mesh = Mesh { wallMesh_.data(), static_cast<int>(wallMesh_.size()) };
-    commands_[LeftWall].material = wallMaterial_;
-    commands_[LeftWall].castsShadow = false;
-
-    commands_[RightWall].mesh = Mesh { wallMesh_.data(), static_cast<int>(wallMesh_.size()) };
-    commands_[RightWall].material = wallMaterial_;
-    commands_[RightWall].castsShadow = false;
-
-    commands_[Pedestal].mesh = Mesh { pedestalMesh_.data(), static_cast<int>(pedestalMesh_.size()) };
-    commands_[Pedestal].material = pedestalMaterial_;
-    commands_[Pedestal].castsShadow = true;
-
-    commands_[AccentBench].mesh = Mesh { benchMesh_.data(), static_cast<int>(benchMesh_.size()) };
-    commands_[AccentBench].material = accentMaterial_;
-    commands_[AccentBench].castsShadow = true;
-
-    commands_[AccentMonolith].mesh = Mesh { monolithMesh_.data(), static_cast<int>(monolithMesh_.size()) };
-    commands_[AccentMonolith].material = monolithMaterial_;
-    commands_[AccentMonolith].castsShadow = true;
+    configureCommand(commands_[Floor], floorMesh_, floorMaterial_, false);
+    configureCommand(commands_[Roof], roofMesh_, wallMaterial_, false);
+    configureCommand(commands_[BackWall], backWallMesh_, wallMaterial_, false);
+    configureCommand(commands_[LeftWall], sideWallMesh_, wallMaterial_, false);
+    configureCommand(commands_[RightWall], sideWallMesh_, wallMaterial_, false);
+    configureCommand(commands_[FrontWallLeft], frontSideWallMesh_, wallMaterial_, false);
+    configureCommand(commands_[FrontWallRight], frontSideWallMesh_, wallMaterial_, false);
+    configureCommand(commands_[FrontWallTop], frontTopWallMesh_, wallMaterial_, false);
+    configureCommand(commands_[Door], doorMesh_, doorMaterial_, true);
+    configureCommand(commands_[Pedestal], pedestalMesh_, pedestalMaterial_, true);
+    configureCommand(commands_[AccentBench], benchMesh_, accentMaterial_, true);
+    configureCommand(commands_[AccentMonolith], monolithMesh_, monolithMaterial_, true);
+    configureCommand(commands_[PointLightMarker], pointLightMarkerMesh_, pointLightMarkerMaterial_, false);
+    configureCommand(commands_[DirectionalLightMarker], directionalLightMarkerMesh_, directionalLightMarkerMaterial_, false);
 
     applyCentralExhibit();
     setupStaticCommands();
@@ -160,20 +188,43 @@ void TestScene::applyCentralExhibit()
         return;
     }
 
-    commands_[CentralExhibit].mesh = Mesh { activeMesh.data(), static_cast<int>(activeMesh.size()) };
-    commands_[CentralExhibit].material = centralMaterial_;
-    commands_[CentralExhibit].castsShadow = true;
+    configureCommand(commands_[CentralExhibit], activeMesh, centralMaterial_, true);
 }
 
 void TestScene::setupStaticCommands()
 {
-    commands_[Floor].transform = Mat4::translation({ 0.0f, -1.0f, -4.1f }) * Mat4::rotationX(-pi * 0.5f);
-    commands_[BackWall].transform = Mat4::translation({ 0.0f, 1.25f, -7.65f });
-    commands_[LeftWall].transform = Mat4::translation({ -4.5f, 1.25f, -4.1f }) * Mat4::rotationY(pi * 0.5f);
-    commands_[RightWall].transform = Mat4::translation({ 4.5f, 1.25f, -4.1f }) * Mat4::rotationY(-pi * 0.5f);
+    const float floorY = -1.0f;
+    const float roomCenterZ = -4.1f;
+    const float backZ = roomCenterZ - preset_.meshes.floorDepth * 0.5f;
+    const float enclosureCenterZ = roomCenterZ + preset_.meshes.frontWallOffset * 0.5f;
+    const float frontZ = roomCenterZ + preset_.meshes.floorDepth * 0.5f + preset_.meshes.frontWallOffset;
+    const float wallCenterY = floorY + preset_.meshes.wallHeight * 0.5f;
+    const float roofY = floorY + preset_.meshes.wallHeight + preset_.meshes.roofThickness * 0.5f;
+    const float frontSideWidth = (preset_.meshes.wallWidth - preset_.meshes.doorWidth) * 0.5f;
+    const float frontSideCenterX = preset_.meshes.doorWidth * 0.5f + frontSideWidth * 0.5f;
+    const float frontTopHeight = preset_.meshes.wallHeight - preset_.meshes.doorHeight;
+    const float frontTopCenterY = floorY + preset_.meshes.doorHeight + frontTopHeight * 0.5f;
+    const float doorLeafWidth = preset_.meshes.doorWidth * 0.92f;
+    const Vec3 doorHinge { -preset_.meshes.doorWidth * 0.5f, floorY + preset_.meshes.doorHeight * 0.5f, frontZ };
+    const Vec3 sunPosition = preset_.renderSettings.shadowTarget
+        + preset_.renderSettings.directionalLights[0].direction * 1.8f;
+
+    commands_[Floor].transform = Mat4::translation({ 0.0f, floorY, enclosureCenterZ }) * Mat4::rotationX(-pi * 0.5f);
+    commands_[Roof].transform = Mat4::translation({ 0.0f, roofY, enclosureCenterZ });
+    commands_[BackWall].transform = Mat4::translation({ 0.0f, wallCenterY, backZ });
+    commands_[LeftWall].transform = Mat4::translation({ -preset_.meshes.wallWidth * 0.5f, wallCenterY, enclosureCenterZ });
+    commands_[RightWall].transform = Mat4::translation({ preset_.meshes.wallWidth * 0.5f, wallCenterY, enclosureCenterZ });
+    commands_[FrontWallLeft].transform = Mat4::translation({ -frontSideCenterX, wallCenterY, frontZ });
+    commands_[FrontWallRight].transform = Mat4::translation({ frontSideCenterX, wallCenterY, frontZ });
+    commands_[FrontWallTop].transform = Mat4::translation({ 0.0f, frontTopCenterY, frontZ });
+    commands_[Door].transform = Mat4::translation(doorHinge)
+        * Mat4::rotationY(-1.05f)
+        * Mat4::translation({ doorLeafWidth * 0.5f, 0.0f, 0.0f });
     commands_[Pedestal].transform = Mat4::translation({ 0.0f, -0.64f, -3.75f });
     commands_[AccentBench].transform = Mat4::translation({ -2.05f, -0.74f, -4.55f }) * Mat4::rotationY(0.35f);
     commands_[AccentMonolith].transform = Mat4::translation({ 2.2f, -0.11f, -4.95f }) * Mat4::rotationY(-0.28f);
+    commands_[PointLightMarker].transform = Mat4::translation(preset_.renderSettings.pointLights[0].position);
+    commands_[DirectionalLightMarker].transform = Mat4::translation(sunPosition);
 }
 
 void TestScene::updateCentralTransform()

@@ -68,6 +68,14 @@ ScenePreset ScenePreset::defaults()
         0.88f,
         0.04f,
         8.0f);
+    preset.doorMaterial = makeMaterial(
+        { 94, 62, 42, 255 },
+        { 146, 94, 58, 255 },
+        { 190, 154, 116, 255 },
+        0.26f,
+        0.88f,
+        0.16f,
+        22.0f);
     preset.accentMaterial = makeMaterial(
         { 92, 112, 132, 255 },
         { 122, 150, 178, 255 },
@@ -84,6 +92,22 @@ ScenePreset ScenePreset::defaults()
         0.84f,
         0.42f,
         52.0f);
+    preset.pointLightMarkerMaterial = makeMaterial(
+        { 255, 164, 82, 255 },
+        { 255, 205, 132, 255 },
+        { 255, 244, 224, 255 },
+        1.15f,
+        0.18f,
+        0.32f,
+        48.0f);
+    preset.directionalLightMarkerMaterial = makeMaterial(
+        { 255, 205, 36, 255 },
+        { 255, 232, 92, 255 },
+        { 255, 252, 214, 255 },
+        1.10f,
+        0.20f,
+        0.28f,
+        42.0f);
 
     preset.renderSettings.directionalLights = {
         DirectionalLight { normalize({ -0.48f, 0.82f, 0.30f }), { 255, 244, 228, 255 }, 1.1f },
@@ -91,7 +115,7 @@ ScenePreset ScenePreset::defaults()
         DirectionalLight { normalize({ 0.0f, -1.0f, 0.0f }), { 255, 255, 255, 255 }, 0.0f },
     };
     preset.renderSettings.pointLights = {
-        PointLight { { 1.65f, 1.9f, -2.35f }, { 255, 214, 178, 255 }, 0.95f, 4.4f },
+        PointLight { { 1.65f, 1.3f, -3.0f }, { 255, 214, 178, 255 }, 0.95f, 4.4f },
         PointLight { { 0.0f, 0.0f, 0.0f }, { 255, 255, 255, 255 }, 0.0f, 1.0f },
     };
     preset.renderSettings.shadowTarget = { 0.0f, 0.2f, -3.9f };

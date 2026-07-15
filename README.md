@@ -13,6 +13,7 @@
 - OBJ 加载：支持 Wavefront OBJ 的位置、UV、法线、负索引和多边形三角化，并可将模型归一化到场景尺寸。
 - CPU Shadow Mapping：从主方向光视角生成 512x512 深度图，shadow map 会先投影有效三角形，再按 tile 并行光栅化；主渲染阶段使用 bias 和 3x3 PCF 计算阴影因子。
 - 多光源着色：渲染器最多支持 3 个方向光和 2 个点光源；当前展厅启用 1 个方向光和 1 个暖色点光源，Final / Light 模式在 float linear RGB 中执行 Blinn-Phong 光照。
+- 光源可视化：场景用暖色球体标记点光源，并用金黄色太阳球标记方向光的布置方向；标记物只参与画面展示，不参与 shadow map 投射。
 - Tone Mapping：Final / Light 模式输出支持 exposure、固定 Reinhard tone mapping 和 gamma encode；Albedo / Normal / Depth / UV / Shadow / LightDepth 调试视图不做 tone mapping。
 - Tile-based 多线程主渲染：主 pass 与 shadow pass 都使用持久线程池和原子计数器动态领取 32x32 tile。
 - 性能 HUD：展示 FPS、帧耗时、Update/Render/HUD/Present、Shadow/Main Pass 耗时和渲染统计。
@@ -105,7 +106,7 @@ cmake --build build --config Debug
 
 ## 场景与资源
 
-默认场景是一间现代室内模型展厅，由 8 个 draw command 组成：地面、后墙、左右侧墙、中央展台与展品、长凳和高立方柱。地面同时使用漫反射贴图与法线贴图，中央展品、展台和几何体会在墙面与地面上形成清晰阴影；不同物体使用金属、石材、墙面和强调色等不同材质。
+默认场景是一间封闭式现代室内模型展厅，由 15 个 draw command 组成：地面、带厚度的屋顶与四周墙体、由左右墙垛和门楣构成的前墙门洞、开启的实体门、中央展台与展品、长凳、高立方柱，以及点光源和方向光的可视化标记。地面同时使用漫反射贴图与法线贴图，中央展品、展台、门和几何体会形成清晰阴影；不同物体使用金属、石材、墙面、木门和强调色等不同材质。
 
 运行时会在当前目录及上级构建目录附近查找资源：
 

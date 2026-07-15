@@ -25,9 +25,19 @@ struct ScenePreset {
         float floorDepth = 8.0f;
         float wallWidth = 9.0f;
         float wallHeight = 4.6f;
+        float wallThickness = 0.18f;
+        float roofThickness = 0.16f;
+        float frontWallOffset = 2.1f;
+        float doorWidth = 1.7f;
+        float doorHeight = 2.35f;
+        float doorThickness = 0.10f;
         Vec3 pedestalSize = { 1.45f, 0.72f, 1.45f };
         Vec3 benchSize = { 1.25f, 0.52f, 0.92f };
         Vec3 monolithSize = { 0.72f, 1.78f, 0.72f };
+        float pointLightMarkerRadius = 0.19f;
+        float directionalLightMarkerRadius = 0.38f;
+        int lightMarkerLatitudeSegments = 10;
+        int lightMarkerLongitudeSegments = 20;
 
         float sculptureHeight = 1.42f;
         float sculptureBaseRadius = 0.22f;
@@ -48,8 +58,11 @@ struct ScenePreset {
     Material pedestalMaterial;
     Material floorMaterial;
     Material wallMaterial;
+    Material doorMaterial;
     Material accentMaterial;
     Material monolithMaterial;
+    Material pointLightMarkerMaterial;
+    Material directionalLightMarkerMaterial;
     RenderSettings renderSettings;
 
     static ScenePreset defaults();
